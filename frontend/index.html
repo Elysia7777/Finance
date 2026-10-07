@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light-red">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Personal Finance Assistant</title>
+  <!-- UI 主题：浅红温馨风（默认），更多主题见 theme.css -->
+  <link rel="stylesheet" href="/theme.css" />
+  <style>
+    /* 布局与组件样式（颜色/圆角/阴影全部来自 theme.css 变量） */
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, 'Microsoft YaHei', 'PingFang SC', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+    }
+    .hidden { display: none !important; }
+    .muted { color: var(--muted); }
+    .small { font-size: 12px; }
+
+    /* ---------- 顶栏：主题选择 / 账号管理 / 金融主体设置 ---------- */
+    #app { min-height: 100vh; display: flex; flex-direction: column; }
+    #topbar {
+      display: flex; justify-content: space-between; align-items: center; gap: 12px;
+      padding: 10px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .brand { font-weight: 700; font-size: 16px; }
+    .topbar-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .theme-control { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+
+    .btn {
+      padding: 7px 14px; border-radius: var(--radius);
+      border: 1px solid transparent; cursor: pointer; font-size: 13px;
+    }
+    .btn.primary { background: var(--primary); color: var(--primary-contrast); }
+    .btn.primary:hover { background: var(--primary-deep); }
+    .btn.ghost { background: transparent; border-color: var(--border); color: var(--text); }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .wide { width: 100%; }
+
+    /* 顶栏账号下拉 */
+    .dropdown { position: relative; }
+    .dropdown summary { list-style: none; user-select: none; }
+    .dropdown summary::-webkit-details-marker { display: none; }
+    .dropdown-menu {
+      position: absolute; right: 0; top: calc(100% + 6px);
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); min-width: 190px; padding: 8px;
+      box-shadow: var(--shadow); z-index: 20;
+    }
+    .menu-info {
+      padding: 6px 10px; font-size: 12px; color: var(--muted);
+      border-bottom: 1px solid var(--border); margin-bottom: 6px; line-height: 1.7;
+    }
+    .menu-item {
+      display: block; width: 100%; text-align: left; padding: 8px 10px;
+      background: none; border: none; border-radius: 8px; cursor: pointer; font-size: 13px;
+    }
+    .menu-item:hover:not(:disabled) { background: var(--panel-head-bg); }
+    .menu-item:disabled { color: var(--muted); cursor: not-allowed; }
+
+    /* ---------- 主布局：左侧主区 + 右侧板块 ---------- */
+    #layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 16px; padding: 16px 20px 24px; flex: 1; align-items: start;
+    }
+    .section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 12px; }
+    .section-head h1 { font-size: 18px; margin: 0; }
+
+    .items-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+    .item-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+    .item-name { font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .item-value { font-size: 18px; font-weight: 700; margin-top: 6px; }
+    .item-note { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .empty-state {
+      border: 2px dashed var(--border); border-radius: var(--radius);
+      padding: 56px 20px; text-align: center; color: var(--muted); line-height: 2;
+    }
+
+    #side-panels { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 68px; }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .panel-head { padding: 10px 14px; background: var(--panel-head-bg); font-weight: 600; border-bottom: 1px solid var(--border); }
+    .panel-body { padding: 6px 14px 12px; }
+    .panel-empty { color: var(--muted); text-align: center; padding: 18px 0; font-size: 13px; }
+    .panel-empty.error { color: var(--danger); }
+    .panel-note { font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
+    .stub-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .stub-table th, .stub-table td { padding: 7px 4px; text-align: left; border-bottom: 1px dashed var(--border); white-space: nowrap; }
+    .stub-table th { color: var(--muted); font-weight: 500; font-size: 12px; }
+    .stub-table tr:last-child td { border-bottom: none; }
+
+    .stub-banner {
+      margin: 8px 0; padding: 8px 10px; font-size: 12px; color: var(--muted);
+      background: var(--chip-bg); border: 1px dashed var(--border); border-radius: 8px; line-height: 1.6;
+    }
+    .badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 999px;
+      background: var(--chip-bg); color: var(--muted); border: 1px solid var(--border); font-weight: 400;
+    }
+    .badge.demo { color: var(--warn-text); background: var(--warn-bg); border-color: var(--warn-border); }
+
+    /* ---------- 弹窗 ---------- */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(83, 62, 56, 0.4);
+      display: flex; align-items: center; justify-content: center; z-index: 50;
+    }
+    .modal { width: min(420px, calc(100vw - 32px)); background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); }
+    .modal header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+    .modal header h3 { margin: 0; font-size: 16px; }
+    .modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--muted); line-height: 1; }
+    .modal-body { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 12px; }
+    .modal-body label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+    .modal-body input, .modal-body select {
+      padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
+      font-size: 14px; background: var(--surface); color: var(--text);
+    }
+    .modal-body input:focus { outline: 2px solid var(--focus-ring); border-color: var(--primary); }
+    .modal-body fieldset {
+      border: 1px solid var(--border); border-radius: 8px; display: flex; gap: 14px;
+      color: var(--muted); font-size: 13px; margin: 0;
+    }
+    .modal-body fieldset label { flex-direction: row; align-items: center; }
+    .form-error { color: var(--danger); font-size: 13px; margin: 0; }
+    .switch-mode { font-size: 13px; color: var(--muted); text-align: center; margin: 0; }
+    .switch-mode a { color: var(--primary); text-decoration: none; }
+
+    /* ---------- Toast ---------- */
+    #toast-root {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; gap: 8px; z-index: 100; align-items: center;
+    }
+    .toast {
+      background: var(--text); color: #fff; padding: 10px 16px; border-radius: 8px;
+      font-size: 13px; opacity: 0; transform: translateY(8px); transition: all 0.25s ease;
+      box-shadow: var(--shadow); max-width: 80vw;
+    }
+    .toast.show { opacity: 1; transform: none; }
+    .toast-error { background: var(--danger); }
+
+    @media (max-width: 900px) {
+      #layout { grid-template-columns: 1fr; }
+      #side-panels { position: static; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- ============ 顶栏：主题选择（🚧后续完成） / 账号管理 / 金融主体设置 ============ -->
+    <header id="topbar">
+      <div class="brand">💰 AI Personal Finance Assistant</div>
+      <div class="topbar-actions">
+        <label class="theme-control" title="主题切换功能将在后续版本实现">
+          主题
+          <select id="theme-select" disabled>
+            <option value="light-red" selected>浅红温馨（默认）</option>
+            <option value="" disabled>更多主题（后续完成）</option>
+          </select>
+          <!-- TODO(团队): 实现主题切换 —— 修改 html 的 data-theme 并在 theme.css 增加对应变量 -->
+        </label>
+        <button id="btn-entity-settings" class="btn ghost" type="button">金融主体设置</button>
+        <!-- 账号管理区：由下方脚本根据登录状态渲染 -->
+        <div id="account-area"></div>
+      </div>
+    </header>
+
+    <!-- ============ 主布局：左侧主区（当前账号项目内容） + 右侧板块 ============ -->
+    <div id="layout">
+      <main id="main-area">
+        <div class="section-head">
+          <h1>我的项目 <span id="items-scope" class="muted">（未登录）</span></h1>
+          <button id="btn-add-item" class="btn primary" type="button">＋ 添加项目</button>
+        </div>
+        <div id="items-list"></div>
+      </main>
+
+      <aside id="side-panels">
+        <!-- 右侧三板块：数据来自 GET /api/panels（🚧 占位），TODO(团队): 行情接入与交互 -->
+        <section class="panel" data-panel="stocks">
+          <header class="panel-head">📈 股票</header>
+          <div class="panel-body" id="panel-stocks"></div>
+        </section>
+        <section class="panel" data-panel="currencies">
+          <header class="panel-head">💱 货币</header>
+          <div class="panel-body" id="panel-currencies"></div>
+        </section>
+        <section class="panel" data-panel="metals">
+          <header class="panel-head">🥇 贵金属</header>
+          <div class="panel-body" id="panel-metals"></div>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <!-- ============ 弹窗：登录 / 注册（极简账号系统客户端入口） ============ -->
+  <div class="modal-backdrop hidden" id="modal-auth">
+    <div class="modal" role="dialog" aria-modal="true">
+      <header>
+        <h3 id="auth-title">登录</h3>
+        <button class="modal-close" type="button" data-close>&times;</button>
+      </header>
+      <div class="modal-body">
+        <label>用户名
+          <input id="auth-username" autocomplete="username" placeholder="2-32 位字母/数字/下划线/中文" />
+        </label>
+        <label>密码
+          <input id="auth-password" type="password" autocomplete="current-password" placeholder="至少 6 位" />
+        </label>
+        <p class="form-error hidden" id="auth-error"></p>
+        <button id="btn-auth-submit" class="btn primary wide" type="button">登 录</button>
+        <p class="switch-mode"><span id="auth-switch-tip">还没有账号？</span><a href="#" id="auth-switch">注册一个</a></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 弹窗：金融主体设置（🚧 框架占位，字段仅作布局展示） ============ -->
+  <div class="modal-backdrop hidden" id="modal-settings">
+    <div class="modal" role="dialog" aria-modal="true">
+      <header>
+        <h3>金融主体设置</h3>
+        <button class="modal-close" type="button" data-close>&times;</button>
+      </header>
+      <div class="modal-body">
+        <p class="stub-banner">🚧 框架占位：金融主体设置功能待团队实现（字段仅用于布局展示）</p>
+        <label>基础货币
+          <select disabled><option>CNY 人民币</option></select>
+        </label>
+        <label>数据显示语言
+          <select disabled><option>简体中文</option></select>
+        </label>
+        <fieldset disabled>
+          <legend>启用的板块</legend>
+          <label><input type="checkbox" disabled checked /> 股票</label>
+          <label><input type="checkbox" disabled checked /> 货币</label>
+          <label><input type="checkbox" disabled checked /> 贵金属</label>
+        </fieldset>
+        <!-- TODO(团队): 实现设置读写与校验，可对接服务器端 /api/settings 接口 -->
+        <button class="btn primary wide" id="btn-save-settings" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-root"></div>
+
+  <script>
+    'use strict';
+    /* ========================================================
+       客户端逻辑（单文件集成）
+       TODO(团队): 主题切换、项目增删改查、板块行情交互、设置读写；
+                   金融计算请调用 finance_calc.py（契约见该文件）。
+       ======================================================== */
+
+    // ---------- 极简状态 ----------
+    var state = { user: null, panels: null, items: null };
+
+    // ---------- API 请求封装（同源，自动附带 Bearer token） ----------
+    var TOKEN_KEY = 'pfa_token';
+    function getToken() { return localStorage.getItem(TOKEN_KEY); }
+    function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); }
+
+    async function request(path, opts) {
+      opts = opts || {};
+      var headers = { 'Content-Type': 'application/json' };
+      var token = getToken();
+      if (token) headers.Authorization = 'Bearer ' + token;
+      var res = await fetch('/api' + path, {
+        method: opts.method || 'GET',
+        headers: headers,
+        body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      });
+      var data = null;
+      try { data = await res.json(); } catch (e) { /* 空响应体 */ }
+      if (!res.ok) {
+        var err = new Error((data && data.error) || ('请求失败（HTTP ' + res.status + '）'));
+        err.status = res.status;
+        throw err;
+      }
+      return data;
+    }
+
+    // ---------- 通用工具 ----------
+    function escapeHtml(v) {
+      return String(v === null || v === undefined ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function fmtAmount(v) { return typeof v === 'number' ? v.toLocaleString('zh-CN') : (v === null || v === undefined ? '—' : v); }
+    function $(id) { return document.getElementById(id); }
+
+    // ---------- Toast ----------
+    function showToast(message, type) {
+      var el = document.createElement('div');
+      el.className = 'toast' + (type === 'error' ? ' toast-error' : '');
+      el.textContent = message;
+      $('toast-root').appendChild(el);
+      setTimeout(function () { el.classList.add('show'); }, 10);
+      setTimeout(function () { el.classList.remove('show'); setTimeout(function () { el.remove(); }, 300); }, 2600);
+    }
+
+    // ---------- 弹窗 ----------
+    function openModal(id) { $(id).classList.remove('hidden'); }
+    function closeModal(id) { $(id).classList.add('hidden'); }
+    function initModals() {
+      document.querySelectorAll('.modal-backdrop').forEach(function (bd) {
+        bd.addEventListener('click', function (e) { if (e.target === bd) bd.classList.add('hidden'); });
+        bd.querySelectorAll('[data-close]').forEach(function (btn) {
+          btn.addEventListener('click', function () { bd.classList.add('hidden'); });
+        });
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+          document.querySelectorAll('.modal-backdrop:not(.hidden)').forEach(function (bd) { bd.classList.add('hidden'); });
+        }
+      });
+    }
+
+    // ---------- 账号管理（登录 / 注册 / 退出） ----------
+    var authMode = 'login';
+
+    function openAuth() {
+      setAuthMode('login');
+      $('auth-username').value = '';
+      $('auth-password').value = '';
+      hideAuthError();
+      openModal('modal-auth');
+      $('auth-username').focus();
+    }
+
+    function setAuthMode(m) {
+      authMode = m;
+      $('auth-title').textContent = m === 'login' ? '登录' : '注册新账号';
+      $('btn-auth-submit').textContent = m === 'login' ? '登 录' : '注 册';
+      $('auth-switch-tip').textContent = m === 'login' ? '还没有账号？' : '已有账号？';
+      $('auth-switch').textContent = m === 'login' ? '注册一个' : '返回登录';
+      hideAuthError();
+    }
+
+    async function submitAuth() {
+      var username = $('auth-username').value.trim();
+      var password = $('auth-password').value;
+      hideAuthError();
+      try {
+        var data = await request(authMode === 'login' ? '/login' : '/register', { method: 'POST', body: { username: username, password: password } });
+        setToken(data.token);
+        setUser(data.user);
+        closeModal('modal-auth');
+        showToast('欢迎，' + data.user.username);
+      } catch (e) {
+        $('auth-error').textContent = e.message;
+        $('auth-error').classList.remove('hidden');
+      }
+    }
+
+    function hideAuthError() { $('auth-error').classList.add('hidden'); }
+
+    async function logout() {
+      try { await request('/logout', { method: 'POST' }); } catch (e) { /* 服务器不可达时也做本地退出 */ }
+      setToken(null);
+      setUser(null);
+      state.items = null;
+      renderItemsView();
+      showToast('已退出登录');
+    }
+
+    async function restoreSession() {
+      try {
+        var data = await request('/profile');
+        setUser(data.user);
+      } catch (e) {
+        setToken(null);
+        setUser(null);
+      }
+    }
+
+    function setUser(u) {
+      state.user = u;
+      renderAccountArea();
+      loadItems();
+    }
+
+    // 顶栏账号管理区：未登录 → 登录按钮；已登录 → 账号下拉（信息 + 修改密码占位 + 退出）
+    function renderAccountArea() {
+      var area = $('account-area');
+      if (!state.user) {
+        area.innerHTML = '';
+        var btn = document.createElement('button');
+        btn.className = 'btn primary';
+        btn.type = 'button';
+        btn.textContent = '登录 / 注册';
+        btn.addEventListener('click', openAuth);
+        area.appendChild(btn);
+        return;
+      }
+      area.innerHTML =
+        '<details class="dropdown">' +
+        '  <summary class="btn ghost">👤 ' + escapeHtml(state.user.username) + '</summary>' +
+        '  <div class="dropdown-menu">' +
+        '    <div class="menu-info">ID：' + escapeHtml(String(state.user.id).slice(0, 8)) + '…<br>注册于：' +
+        escapeHtml(String(state.user.createdAt || '').slice(0, 10) || '—') + '</div>' +
+        '    <button class="menu-item" id="btn-change-password" type="button" disabled title="功能待实现">修改密码（待实现）</button>' +
+        '    <button class="menu-item" id="btn-logout" type="button">退出登录</button>' +
+        '  </div>' +
+        '</details>';
+      $('btn-logout').addEventListener('click', logout);
+    }
+
+    // ---------- 右侧板块（🚧 占位数据渲染；TODO: 行情接入） ----------
+    function renderRows(container, columns, rows, opts) {
+      opts = opts || {};
+      if (!rows.length) { container.innerHTML = '<p class="panel-empty">暂无数据</p>'; return; }
+      var head = columns.map(function (c) { return '<th>' + escapeHtml(c.label) + '</th>'; }).join('');
+      var body = rows.map(function (row) {
+        return '<tr>' + columns.map(function (c) {
+          var raw = c.fmt ? c.fmt(row[c.key]) : row[c.key];
+          return '<td>' + escapeHtml(raw === null || raw === undefined ? '—' : raw) + '</td>';
+        }).join('') + '</tr>';
+      }).join('');
+      container.innerHTML =
+        (opts.stub ? '<p class="stub-banner">🚧 占位数据：行情接入待实现</p>' : '') +
+        (opts.note ? '<p class="panel-note">' + escapeHtml(opts.note) + '</p>' : '') +
+        '<table class="stub-table"><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table>';
+    }
+
+    function renderAllPanels(panels) {
+      if (!panels) return;
+      renderRows($('panel-stocks'), [
+        { label: '代码', key: 'code' }, { label: '名称', key: 'name' },
+        { label: '现价', key: 'price' }, { label: '涨跌幅', key: 'changePct', fmt: function (v) { return v === null || v === undefined ? '—' : (v > 0 ? '+' : '') + v + '%'; } },
+      ], (panels.stocks && panels.stocks.rows) || [], { stub: panels._stub });
+
+      renderRows($('panel-currencies'), [
+        { label: '代码', key: 'code' }, { label: '币种', key: 'name' }, { label: '汇率', key: 'rate' },
+      ], (panels.currencies && panels.currencies.rows) || [], {
+        stub: panels._stub,
+        note: panels.currencies && panels.currencies.base ? '基准货币：' + panels.currencies.base : '',
+      });
+
+      renderRows($('panel-metals'), [
+        { label: '代码', key: 'code' }, { label: '品种', key: 'name' },
+        { label: '价格', key: 'price' }, { label: '单位', key: 'unit' },
+      ], (panels.metals && panels.metals.rows) || [], { stub: panels._stub });
+    }
+
+    function renderPanelsError(message) {
+      ['panel-stocks', 'panel-currencies', 'panel-metals'].forEach(function (id) {
+        $(id).innerHTML = '<p class="panel-empty error">' + escapeHtml('加载失败：' + message) + '</p>';
+      });
+    }
+
+    // ---------- 主区：当前账号的项目内容（🚧 占位数据；TODO: 增删改查 + 金融计算） ----------
+    var TYPE_LABELS = { cash: '现金', stock: '股票', currency: '货币', metal: '贵金属', other: '其他' };
+
+    function renderItemsView() {
+      $('items-scope').textContent = state.user ? '（' + state.user.username + '）' : '（未登录）';
+      var container = $('items-list');
+
+      if (!state.user) {
+        container.innerHTML =
+          '<div class="empty-state">未登录 —— 登录后可查看当前账号的项目内容<br>' +
+          '<span class="muted small">账号系统（注册 / 登录）见顶栏「登录 / 注册」</span></div>';
+        return;
+      }
+      if (!state.items) {
+        container.innerHTML = '<div class="empty-state">加载中…</div>';
+        return;
+      }
+      var items = state.items.items || [];
+      var stubNote = state.items._stub
+        ? '<p class="stub-banner">🚧 框架占位数据（服务器端桩接口返回的示例）：项目的增删改查与金融计算待团队实现</p>'
+        : '';
+      if (!items.length) {
+        container.innerHTML = stubNote + '<div class="empty-state">暂无项目 —— 点击右上角「＋ 添加项目」（功能待实现）</div>';
+        return;
+      }
+      var cards = items.map(function (it) {
+        return '<article class="item-card">' +
+          '<div class="item-name"><span>' + escapeHtml(it.name) + '</span>' +
+          '<span class="badge">' + escapeHtml(TYPE_LABELS[it.type] || it.type) + '</span></div>' +
+          '<div class="item-value">' + escapeHtml(fmtAmount(it.value)) +
+          ' <span class="muted small">' + escapeHtml(it.currency || '') + '</span></div>' +
+          (it.note ? '<div class="item-note">' + escapeHtml(it.note) + '</div>' : '') +
+          '</article>';
+      }).join('');
+      container.innerHTML = stubNote + '<div class="items-grid">' + cards + '</div>';
+    }
+
+    // ---------- 数据加载 ----------
+    async function loadPanels() {
+      try { state.panels = await request('/panels'); renderAllPanels(state.panels); }
+      catch (e) { renderPanelsError(e.message); }
+    }
+
+    async function loadItems() {
+      if (!state.user) { state.items = null; renderItemsView(); return; }
+      try {
+        state.items = await request('/items');
+        renderItemsView();
+      } catch (e) {
+        if (e.status === 401) {
+          setToken(null);
+          state.user = null;
+          state.items = null;
+          renderAccountArea();
+          renderItemsView();
+          showToast('登录已过期，请重新登录', 'error');
+        } else {
+          state.items = { _stub: false, items: [] };
+          renderItemsView();
+          showToast('项目数据加载失败：' + e.message, 'error');
+        }
+      }
+    }
+
+    // ---------- 启动装配 ----------
+    function init() {
+      initModals();
+
+      // 主题选择：控件已预留，切换功能 🚧 后续完成
+      $('theme-select').addEventListener('change', function () {
+        /* TODO(团队): document.documentElement.dataset.theme = 选中值 即可完成切换 */
+      });
+
+      $('btn-entity-settings').addEventListener('click', function () { openModal('modal-settings'); });
+      $('btn-save-settings').addEventListener('click', function () { showToast('功能待实现（框架占位）：金融主体设置保存'); });
+      $('btn-add-item').addEventListener('click', function () { showToast('功能待实现（框架占位）：项目的添加入口'); });
+
+      $('btn-auth-submit').addEventListener('click', submitAuth);
+      $('auth-switch').addEventListener('click', function (e) {
+        e.preventDefault();
+        setAuthMode(authMode === 'login' ? 'register' : 'login');
+      });
+      $('modal-auth').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitAuth(); });
+
+      // 点击空白处收起顶栏下拉菜单
+      document.addEventListener('click', function (e) {
+        document.querySelectorAll('details.dropdown[open]').forEach(function (d) {
+          if (!d.contains(e.target)) d.removeAttribute('open');
+        });
+      });
+
+      if (getToken()) restoreSession();
+      else { state.user = null; renderAccountArea(); renderItemsView(); }
+      loadPanels();
+    }
+
+    init();
+  </script>
+</body>
+</html>

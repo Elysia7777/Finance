@@ -1,0 +1,27 @@
+{
+  "_stub": true,
+  "note": "框架占位数据：仅用于展示右侧板块布局，数值字段为 null 时客户端显示“—”。TODO(团队): 接入真实行情数据源；字段结构是客户端渲染契约，改动需同步 climate/index.html。",
+  "stocks": {
+    "rows": [
+      { "code": "600519", "name": "贵州茅台", "price": null, "changePct": null },
+      { "code": "00700", "name": "腾讯控股", "price": null, "changePct": null },
+      { "code": "AAPL", "name": "苹果", "price": null, "changePct": null }
+    ]
+  },
+  "currencies": {
+    "base": "CNY",
+    "rows": [
+      { "code": "USD", "name": "美元", "rate": null },
+      { "code": "EUR", "name": "欧元", "rate": null },
+      { "code": "JPY", "name": "日元", "rate": null },
+      { "code": "HKD", "name": "港元", "rate": null }
+    ]
+  },
+  "metals": {
+    "rows": [
+      { "code": "XAU", "name": "黄金", "price": null, "unit": "元/克" },
+      { "code": "XAG", "name": "白银", "price": null, "unit": "元/克" },
+      { "code": "PT", "name": "铂金", "price": null, "unit": "元/克" }
+    ]
+  }
+}

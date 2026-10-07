@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+
+# 服务器端运行时账号数据（首次运行自动创建，不入库）
+backend/db.json
+
+# SQLite 数据库（B 组存储模块的运行产物，不入库）
+*.db
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db
+
+# 环境变量
+.env
+.env.*

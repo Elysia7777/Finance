@@ -1,0 +1,30 @@
+/* ============================================================
+   UI 主题 —— 默认主题：浅红温馨风（light-red）
+   组件样式使用本文件的 CSS 变量；TODO(团队): 新增主题时在此追加
+   [data-theme="xxx"] 变量覆盖，并在 index.html 顶栏选择器中接入
+   （主题切换逻辑待实现，当前选择器为预留禁用状态）。
+   ============================================================ */
+:root,
+[data-theme='light-red'] {
+  --bg: #fdf2ef;              /* 浅暖粉页面背景 */
+  --surface: #ffffff;
+  --border: #f2ddd6;
+  --text: #533e38;            /* 暖棕文字 */
+  --muted: #a78a82;
+  --primary: #e2705f;         /* 温馨珊瑚红 */
+  --primary-deep: #cf5c4c;
+  --primary-contrast: #ffffff;
+  --panel-head-bg: #fbe9e3;
+  --chip-bg: #f8edea;
+  --danger: #d9534f;
+  --warn-text: #b0603a;
+  --warn-bg: #fdf1dd;
+  --warn-border: #f2d9ab;
+  --focus-ring: #f6bdae;
+  --radius: 12px;
+  --shadow: 0 8px 24px rgba(190, 105, 90, 0.1);
+}
+
+/* 预留位：更多主题待团队添加（如暗色主题） */
+[data-theme='dark'] {
+}

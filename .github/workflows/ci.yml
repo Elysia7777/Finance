@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 语法检查（全部 Python 文件）
+        run: python -m py_compile backend/*.py frontend/*.py ai_docs/*.py
+
+      - name: 服务器端启动 + 客户端页面冒烟
+        run: |
+          python backend/server.py > server.log 2>&1 &
+          sleep 2
+          curl -fsS http://127.0.0.1:8000/api/health
+          curl -fsS http://127.0.0.1:8000/api/panels > /dev/null
+          curl -fsS http://127.0.0.1:8000/theme.css > /dev/null
+          curl -fsS http://127.0.0.1:8000/ | grep -q "AI Personal Finance Assistant"
+          echo "冒烟检查通过"
+
+      - name: 客户端金融计算契约自测
+        run: python frontend/finance_calc.py

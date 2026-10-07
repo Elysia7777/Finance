@@ -59,28 +59,18 @@ Streamlit 界面为 A 组待建项，实现后运行方式：`pip install stream
 
 ## GitHub 开发全流程
 
-### 第一次：把项目放上 GitHub（项目负责人，只需一次）
-
-```bash
-# 1. 在 GitHub 网页上新建一个空仓库（不要勾选自动生成 README / .gitignore / License）
-#    仓库名建议：ai-personal-finance-assistant
-
-# 2. 本地首次提交（本仓库已执行过 git init，可跳过第一条）
-git init -b main
-git add -A
-git commit -m "chore: 项目框架骨架初始化"
-
-# 3. 关联远端并推送（地址换成你的仓库地址）
-git remote add origin https://github.com/<用户名或组织>/ai-personal-finance-assistant.git
-git push -u origin main
-```
 
 ### 第一次：新成员加入（每人只需一次）
 
 ```bash
+
+# 0. 设置代理（假设梯子端口是7890）
+git config --global http.proxy http://127.0.0.1:7890
+git config --global https.proxy http://127.0.0.1:7890
+
 # 1. 克隆仓库并进入目录
-git clone https://github.com/<用户名或组织>/ai-personal-finance-assistant.git
-cd ai-personal-finance-assistant
+git clone https://github.com/Elysia7777/Finance.git
+cd Finance
 
 # 2. 首次使用 Git 需配置身份（--global 全局只需配一次）
 git config --global user.name "你的名字"
@@ -94,15 +84,17 @@ python frontend/finance_calc.py   # 金融计算契约自测
 ### 后续：日常开发循环（GitHub Flow，每个功能重复一次）
 
 ```bash
-# 1. 每天开始前：同步主干最新代码
+# 1. 每次开始前：同步主干最新代码
 git checkout main
 git pull origin main
 
 # 2. 从 main 新建功能分支（前缀约定：feat/ 新功能、fix/ 修缺陷、docs/ 文档）
 git checkout -b feat/xxx
+#或者切换到已有分支
+git checkout feat/xxx
 
 # 3. 开发 → 提交（可多次）
-git add <改动的文件>
+git add "改动的文件"
 git commit -m "feat: xxx"
 
 # 4. 推送分支到 GitHub（首次推送加 -u 建立关联，之后直接 git push）
@@ -112,18 +104,34 @@ git push -u origin feat/xxx
 #    网页方式：推送后仓库页面会出现 “Compare & pull request” 提示，
 #    或 Pull requests → New pull request（base: main ← compare: feat/xxx），
 #    填写说明后创建 PR，至少一人 Review 通过后点击 Merge
-#    命令行方式（可选，装好 GitHub CLI 后）：gh pr create --base main --head feat/xxx
 
-# 6. 合并后回到主干同步，删除已完成分支
+# 6. 合并后回到主干同步，删除已完成分支（不删也可以）
 git checkout main
 git pull origin main
 git branch -d feat/xxx
 git push origin --delete feat/xxx
 ```
+<p align="center">
+  <img src="PPT/1.png" width="30%" />
+  <img src="PPT/2.png" width="30%" />
+  <img src="PPT/3.png" width="30%" />
+</p>
+### 文件删除方式：（不建议直接在主线修改文件。这个部分尽量少用）
+
+```bash
+# 1. 先切回 main 并同步，确保确保本地 main 和云端一致
+git checkout main
+git pull origin main
+
+# 2. 删除文件（举例PPT\Risks_Tests_Team_Plan_CN.pptx和PPT\Risks_Tests，Team_Plan.pptx）
+git rm "PPT\Risks_Tests_Team_Plan_CN.pptx" "PPT\Risks_Tests，Team_Plan.pptx"
+#注意空格
+git commit -m "chore: 删除第三部分PPT"
+git push origin main
+#git rm 会同时从工作区删除文件，并把这个删除加入暂存区。
+
 
 ### 协作约定
 
-- CI（`.github/workflows/ci.yml`）会在每个 PR 上自动运行（全量语法检查 + 服务器冒烟 + 首页检查 + `finance_calc` 契约自测），保持绿色再合并
-- 提交信息格式：`feat: xxx` / `fix: xxx` / `docs: xxx`
-- 代码中 `TODO(组名)` 注释即任务入口（如 `TODO(A组)`、`TODO(B组)`）；`/api/panels`、`/api/items` 字段结构改动需同步 `frontend/index.html` 渲染代码与本文件
 - `backend/db.json` 为运行时账号数据（已 gitignore），**不要提交**；如需重置本地数据直接删除该文件
+- `.gitignore` 用来确定那些文件不能上传

@@ -9,10 +9,17 @@ TODO(B组): 定义重复判定键（如 日期+金额+摘要）与冲突处理�
 
 
 def dedup(records, existing=None):
-    """流水去重校验。
+    existing = existing or []
+    seen = set()
+    for r in existing:
+        seen.add((r.get("date"), r.get("amount"), r.get("note")))
 
-    :param records: 本次导入的流水列表
-    :param existing: 库中已有流水列表（可为 None）
-    :return: (去重后新增的记录列表, 重复/冲突的记录列表)
-    """
-    raise NotImplementedError("dedup 待实现（B·去重校验占位）")
+    added, duplicated = [], []
+    for r in records:
+        key = (r.get("date"), r.get("amount"), r.get("note"))
+        if key in seen:
+            duplicated.append(r)
+        else:
+            seen.add(key)
+            added.append(r)
+    return added, duplicated

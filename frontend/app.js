@@ -1,0 +1,396 @@
+(() => {
+  'use strict';
+
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+  const money = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' });
+  const bucketNames = { daily: '日常开支', monthly: '月度开支', large: '大型开支', income: '收入' };
+  const categoryChoices = ['日常开支', '月度开支', '大型开支', '餐饮', '交通', '购物', '医疗', '娱乐', '收入'];
+  const state = { profile: {}, settings: {}, transactions: [], items: [], panels: {} };
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+  async function request(path, options = {}) {
+    const response = await fetch(`/api${path}`, {
+      method: options.method || 'GET',
+      headers: options.body instanceof FormData ? undefined : { 'Content-Type': 'application/json' },
+      body: options.body === undefined ? undefined :
+        (options.body instanceof FormData ? options.body : JSON.stringify(options.body)),
+    });
+    let data = null;
+    try { data = await response.json(); } catch (error) { /* Empty response. */ }
+    if (!response.ok) {
+      const failure = new Error((data && data.error) || `请求失败（HTTP ${response.status}）`);
+      failure.status = response.status;
+      throw failure;
+    }
+    return data;
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[char]);
+  }
+
+  function formatMoney(value) { return money.format(Number(value) || 0); }
+
+  function toast(message, isError = false) {
+    const element = document.createElement('div');
+    element.className = `toast${isError ? ' error' : ''}`;
+    element.textContent = message;
+    $('#toast-root').append(element);
+    setTimeout(() => element.remove(), 3600);
+  }
+
+  function selectedMonth() { return $('#month-select').value || currentMonth; }
+
+  function transactionsForMonth() {
+    const month = selectedMonth();
+    return state.transactions.filter(transaction => transaction.date.startsWith(month));
+  }
+
+  function renderProfile() {
+    $('#profile-name').textContent = state.profile.displayName || '我的空间';
+    $('#profile-avatar').textContent = state.profile.avatar || '🌱';
+    const form = $('#profile-form');
+    form.elements.displayName.value = state.profile.displayName || '我的空间';
+    form.elements.avatar.value = state.profile.avatar || '🌱';
+  }
+
+  function renderSummary(transactions) {
+    const income = transactions.filter(item => item.direction === 'income');
+    const expenses = transactions.filter(item => item.direction === 'expense');
+    const incomeTotal = income.reduce((sum, item) => sum + Number(item.amount), 0);
+    const expenseTotal = expenses.reduce((sum, item) => sum + Number(item.amount), 0);
+    $('#summary-net').textContent = formatMoney(incomeTotal - expenseTotal);
+    $('#summary-income').textContent = formatMoney(incomeTotal);
+    $('#summary-expense').textContent = formatMoney(expenseTotal);
+    $('#income-count').textContent = income.length;
+    $('#expense-count').textContent = expenses.length;
+
+    const buckets = ['daily', 'monthly', 'large'];
+    const totals = buckets.map(bucket => expenses
+      .filter(item => item.bucket === bucket)
+      .reduce((sum, item) => sum + Number(item.amount), 0));
+    const max = Math.max(...totals, 0);
+    $('#breakdown').innerHTML = totals.every(total => !total)
+      ? '<p class="empty-note">导入账单后，这里会显示日常、月度与大型开支。</p>'
+      : buckets.map((bucket, index) => {
+        const details = expenses.filter(item => item.bucket === bucket);
+        const categoryTotals = {};
+        details.forEach(item => { categoryTotals[item.category] = (categoryTotals[item.category] || 0) + Number(item.amount); });
+        const topCategories = Object.entries(categoryTotals).sort((a, b) => b[1] - a[1]).slice(0, 2)
+          .map(([name]) => name).join('、');
+        const width = max ? Math.round(totals[index] / max * 100) : 0;
+        return `<div class="breakdown-row">
+          <span class="breakdown-label" title="${escapeHtml(topCategories || bucketNames[bucket])}">${bucketNames[bucket]}</span>
+          <div class="progress-track" aria-label="${bucketNames[bucket]}占比 ${width}%"><div class="progress-fill" style="width:${width}%"></div></div>
+          <strong class="breakdown-value">${formatMoney(totals[index])}</strong>
+        </div>`;
+      }).join('');
+  }
+
+  function renderDailyChart(transactions) {
+    const [year, month] = selectedMonth().split('-').map(Number);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const daily = new Map();
+    transactions.forEach(item => {
+      const day = Number(item.date.slice(8, 10));
+      const entry = daily.get(day) || { income: 0, expense: 0 };
+      entry[item.direction] += Number(item.amount);
+      daily.set(day, entry);
+    });
+    const max = Math.max(1, ...[...daily.values()].flatMap(value => [value.income, value.expense]));
+    $('#daily-chart').innerHTML = Array.from({ length: daysInMonth }, (_, index) => {
+      const day = index + 1;
+      const values = daily.get(day) || { income: 0, expense: 0 };
+      const incomeHeight = values.income ? Math.max(3, Math.round(values.income / max * 88)) : 2;
+      const expenseHeight = values.expense ? Math.max(3, Math.round(values.expense / max * 88)) : 2;
+      return `<div class="day-column" title="${escapeHtml(month)}-${String(day).padStart(2, '0')} 收入 ${formatMoney(values.income)} · 支出 ${formatMoney(values.expense)}">
+        <div class="day-bars"><span class="day-bar income" style="height:${incomeHeight}px"></span><span class="day-bar expense" style="height:${expenseHeight}px"></span></div>
+        <span class="day-label">${day}</span>
+      </div>`;
+    }).join('');
+  }
+
+  function categoryOptions(transaction) {
+    const choices = [...new Set([...categoryChoices, ...state.settings.rules.map(rule => rule.category), transaction.category])];
+    return choices.map(category => `<option value="${escapeHtml(category)}"${category === transaction.category ? ' selected' : ''}>${escapeHtml(category)}</option>`).join('') +
+      '<option value="__custom__">＋ 自定义分类…</option>';
+  }
+
+  function transactionTable(transactions) {
+    if (!transactions.length) return '<p class="empty-note">这个月还没有流水。导入微信账单后，记录会显示在这里。</p>';
+    const rows = transactions.map(transaction => {
+      const title = transaction.merchant || transaction.category || '账单记录';
+      const secondary = [transaction.note, transaction.source].filter(Boolean).join(' · ');
+      return `<tr>
+        <td class="transaction-date">${escapeHtml(transaction.date)}</td>
+        <td><div class="transaction-merchant" title="${escapeHtml(title)}">${escapeHtml(title)}</div><div class="transaction-note">${escapeHtml(secondary)}</div></td>
+        <td><select class="category-select" data-id="${escapeHtml(transaction.id)}" aria-label="修改分类">${categoryOptions(transaction)}</select></td>
+        <td class="transaction-source">${escapeHtml(bucketNames[transaction.bucket] || '')}</td>
+        <td class="amount ${transaction.direction === 'income' ? 'income' : 'expense'}">${transaction.direction === 'income' ? '+' : '−'}${formatMoney(transaction.amount)}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="table-scroll"><table class="transaction-table">
+      <thead><tr><th>日期</th><th>交易对象 / 摘要</th><th>分类（可修改）</th><th>开支类型</th><th style="text-align:right">金额</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  }
+
+  function renderTransactions() {
+    const transactions = transactionsForMonth();
+    renderSummary(transactions);
+    renderDailyChart(transactions);
+    const sorted = [...transactions].sort((a, b) => b.date.localeCompare(a.date));
+    $('#recent-transactions').innerHTML = transactionTable(sorted.slice(0, 8));
+    $('#all-transactions').innerHTML = transactionTable(sorted);
+    $('#month-select-secondary').value = selectedMonth();
+  }
+
+  function renderRules() {
+    const rules = state.settings.rules || [];
+    $('#large-threshold').value = state.settings.largeThreshold || 1000;
+    $('#rule-count').textContent = `${rules.length} 条`;
+    $('#rules-list').innerHTML = rules.length ? rules.map(rule => `
+      <div class="rule-row">
+        <div class="rule-description">
+          <span class="rule-keyword">${escapeHtml(rule.keyword)}</span>
+          ${rule.amount === null ? '' : `<span class="rule-tag">金额 ¥${escapeHtml(rule.amount)}</span>`}
+          <span class="rule-arrow">→</span><span class="rule-category">${escapeHtml(rule.category)}</span>
+          <span class="rule-tag">${bucketNames[rule.bucket] || ''}</span>
+        </div>
+        <button class="icon-button delete-rule" data-id="${escapeHtml(rule.id)}" aria-label="删除规则">×</button>
+      </div>`).join('') : '<p class="empty-note">还没有自定义规则。添加规则后，会优先于默认分类。</p>';
+  }
+
+  const assetTypes = { fund: '基金', stock: '股票', cash: '现金', other: '其他' };
+
+  function renderAssets() {
+    const total = state.items.reduce((sum, item) => sum + Number(item.value), 0);
+    $('#assets-total').textContent = formatMoney(total);
+    $('#assets-list').innerHTML = state.items.length ? state.items.map(item => {
+      const cost = Number(item.quantity) * Number(item.costPrice);
+      const profit = Number(item.value) - cost;
+      return `<article class="asset-card">
+        <div class="asset-card-top"><div><h3>${escapeHtml(item.name)}</h3><span class="asset-type">${assetTypes[item.type] || '其他'} · ${escapeHtml(item.quantity)} 份</span></div>
+        <button class="icon-button delete-asset" data-id="${escapeHtml(item.id)}" aria-label="删除资产">×</button></div>
+        <div class="asset-value">${formatMoney(item.value)}</div>
+        <div class="asset-return">成本 ${formatMoney(cost)} · ${profit >= 0 ? '浮盈' : '浮亏'} ${formatMoney(Math.abs(profit))}</div>
+      </article>`;
+    }).join('') : '<section class="card empty-note">添加一项基金、股票或现金记录，开始整理你的个人资产。</section>';
+  }
+
+  function renderPanels() {
+    const definitions = [
+      ['stocks', 'panel-stocks', 'code', 'name', 'price'],
+      ['currencies', 'panel-currencies', 'code', 'name', 'rate'],
+      ['metals', 'panel-metals', 'code', 'name', 'price'],
+    ];
+    definitions.forEach(([key, target, codeKey, nameKey, valueKey]) => {
+      const panel = state.panels[key] || {};
+      const rows = panel.rows || [];
+      $(`#${target}`).innerHTML = rows.length ? rows.map(row => `
+        <div class="market-row"><span>${escapeHtml(row[nameKey] || row[codeKey])} <small>${escapeHtml(row[codeKey] || '')}</small></span>
+        <span>${row[valueKey] == null ? '待接入' : escapeHtml(row[valueKey])}</span></div>`).join('') :
+        '<p class="empty-note">接口已保留，行情服务暂未开放。</p>';
+    });
+  }
+
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    $('#theme-select').value = theme;
+  }
+
+  function render() {
+    renderProfile();
+    renderTransactions();
+    renderRules();
+    renderAssets();
+    renderPanels();
+  }
+
+  async function reloadTransactions() {
+    const result = await request('/transactions');
+    state.transactions = result.transactions;
+    renderTransactions();
+  }
+
+  async function saveSettings(changes) {
+    state.settings = await request('/settings', { method: 'PUT', body: changes });
+    renderRules();
+    await reloadTransactions();
+  }
+
+  async function updateCategory(id, category) {
+    const result = await request(`/transactions/${encodeURIComponent(id)}`, { method: 'PUT', body: { category } });
+    const index = state.transactions.findIndex(item => item.id === id);
+    if (index >= 0) state.transactions[index] = result.transaction;
+    renderTransactions();
+    toast('分类已更新');
+  }
+
+  function showView(view) {
+    $$('.view').forEach(section => section.classList.toggle('hidden', section.id !== `view-${view}`));
+    $$('.nav-link').forEach(button => button.classList.toggle('active', button.dataset.view === view));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function uploadFile(file) {
+    if (!file) return;
+    const feedback = $('#upload-feedback');
+    feedback.className = 'feedback';
+    feedback.textContent = `正在读取 ${file.name}…`;
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const result = await request('/bills/wechat', { method: 'POST', body: form });
+      await reloadTransactions();
+      feedback.textContent = `已处理 ${result.parsed} 笔：新增 ${result.imported} 笔，跳过重复 ${result.duplicates} 笔。`;
+      toast(`账单已导入，新增 ${result.imported} 笔`);
+    } catch (error) {
+      feedback.className = 'feedback error';
+      feedback.textContent = error.message;
+      toast(error.message, true);
+    } finally {
+      $('#bill-file').value = '';
+    }
+  }
+
+  function bindEvents() {
+    $$('.nav-link').forEach(button => button.addEventListener('click', () => showView(button.dataset.view)));
+    $$('[data-go]').forEach(button => button.addEventListener('click', () => showView(button.dataset.go)));
+    $('#month-select').addEventListener('change', renderTransactions);
+    $('#month-select-secondary').addEventListener('change', event => {
+      $('#month-select').value = event.target.value;
+      renderTransactions();
+    });
+    $('#bill-file').addEventListener('change', event => uploadFile(event.target.files[0]));
+    const dropzone = $('#dropzone');
+    ['dragenter', 'dragover'].forEach(name => dropzone.addEventListener(name, event => {
+      event.preventDefault();
+      dropzone.classList.add('dragging');
+    }));
+    ['dragleave', 'drop'].forEach(name => dropzone.addEventListener(name, event => {
+      event.preventDefault();
+      dropzone.classList.remove('dragging');
+    }));
+    dropzone.addEventListener('drop', event => uploadFile(event.dataTransfer.files[0]));
+    $('#theme-select').addEventListener('change', async event => {
+      applyTheme(event.target.value);
+      try { await saveSettings({ theme: event.target.value }); }
+      catch (error) { toast(error.message, true); }
+    });
+    $('#profile-open').addEventListener('click', () => $('#profile-dialog').showModal());
+    $$('[data-dialog-close]').forEach(button => button.addEventListener('click', () => $('#profile-dialog').close()));
+    $('#profile-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      try {
+        const result = await request('/profile', {
+          method: 'PUT',
+          body: { displayName: form.get('displayName'), avatar: form.get('avatar') },
+        });
+        state.profile = result.profile;
+        renderProfile();
+        $('#profile-dialog').close();
+        toast('个性化设置已保存');
+      } catch (error) { toast(error.message, true); }
+    });
+    $('#large-threshold').addEventListener('change', async event => {
+      try { await saveSettings({ largeThreshold: event.target.value }); toast('门槛已更新'); }
+      catch (error) { toast(error.message, true); renderRules(); }
+    });
+    $('#rule-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const formElement = event.currentTarget;
+      const form = new FormData(formElement);
+      const rules = [...state.settings.rules, {
+        id: (crypto.randomUUID && crypto.randomUUID()) || `${Date.now()}`,
+        keyword: form.get('keyword'),
+        amount: form.get('amount') ? Number(form.get('amount')) : null,
+        category: form.get('category'),
+        bucket: form.get('bucket'),
+      }];
+      try {
+        await saveSettings({ rules });
+        formElement.reset();
+        toast('规则已保存');
+      } catch (error) { toast(error.message, true); }
+    });
+    $('#rules-list').addEventListener('click', async event => {
+      const button = event.target.closest('.delete-rule');
+      if (!button) return;
+      try {
+        await saveSettings({ rules: state.settings.rules.filter(rule => rule.id !== button.dataset.id) });
+        toast('规则已删除');
+      } catch (error) { toast(error.message, true); }
+    });
+    $('#asset-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const formElement = event.currentTarget;
+      const form = new FormData(formElement);
+      const item = Object.fromEntries(form.entries());
+      for (const key of ['quantity', 'costPrice', 'currentPrice']) item[key] = Number(item[key]);
+      try {
+        const result = await request('/items', { method: 'POST', body: item });
+        state.items.unshift(result.item);
+        renderAssets();
+        formElement.reset();
+        formElement.elements.quantity.value = '1';
+        formElement.elements.costPrice.value = '0';
+        formElement.elements.currentPrice.value = '0';
+        toast('资产已保存');
+      } catch (error) { toast(error.message, true); }
+    });
+    $('#assets-list').addEventListener('click', async event => {
+      const button = event.target.closest('.delete-asset');
+      if (!button || !window.confirm('确定删除这项资产记录吗？')) return;
+      try {
+        await request(`/items/${encodeURIComponent(button.dataset.id)}`, { method: 'DELETE' });
+        state.items = state.items.filter(item => item.id !== button.dataset.id);
+        renderAssets();
+        toast('资产记录已删除');
+      } catch (error) { toast(error.message, true); }
+    });
+    document.addEventListener('change', async event => {
+      const select = event.target.closest('.category-select');
+      if (!select || !select.value) return;
+      let category = select.value;
+      if (category === '__custom__') {
+        category = window.prompt('输入新的分类名称：', '');
+        if (!category || !category.trim()) { renderTransactions(); return; }
+        category = category.trim();
+      }
+      try { await updateCategory(select.dataset.id, category); }
+      catch (error) { toast(error.message, true); renderTransactions(); }
+    });
+  }
+
+  async function start() {
+    const today = new Date();
+    $('#today-label').textContent = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'full' }).format(today);
+    $('#month-select').value = currentMonth;
+    $('#month-select-secondary').value = currentMonth;
+    bindEvents();
+    try {
+      const [profile, settings, transactions, items, panels] = await Promise.all([
+        request('/profile'), request('/settings'), request('/transactions'),
+        request('/items'), request('/panels'),
+      ]);
+      state.profile = profile.profile;
+      state.settings = settings;
+      state.transactions = transactions.transactions;
+      state.items = items.items;
+      state.panels = panels;
+      applyTheme(settings.theme || 'light');
+      render();
+    } catch (error) {
+      toast(`加载本地数据失败：${error.message}`, true);
+      $('#recent-transactions').innerHTML = `<p class="empty-note">${escapeHtml(error.message)}</p>`;
+      $('#all-transactions').innerHTML = `<p class="empty-note">${escapeHtml(error.message)}</p>`;
+    }
+  }
+
+  start();
+})();

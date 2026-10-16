@@ -26,8 +26,13 @@ jobs:
           curl -fsS http://127.0.0.1:8000/api/health
           curl -fsS http://127.0.0.1:8000/api/panels > /dev/null
           curl -fsS http://127.0.0.1:8000/theme.css > /dev/null
-          curl -fsS http://127.0.0.1:8000/ | grep -q "AI Personal Finance Assistant"
+          curl -fsS http://127.0.0.1:8000/app.js > /dev/null
+          curl -fsS http://127.0.0.1:8000/ | grep -q "把日子"
+          curl -fsS http://127.0.0.1:8000/api/profile | grep -q "displayName"
           echo "冒烟检查通过"
 
-      - name: 客户端金融计算契约自测
+      - name: 本机账单导入与分类回归测试
+        run: python -m unittest discover -s backend -p "test_*.py"
+
+      - name: 金融计算自测
         run: python frontend/finance_calc.py

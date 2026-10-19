@@ -5,12 +5,14 @@
 import json
 import os
 import re
+import sys
 from email import policy
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import bill_parser
+import qa
 import storage
 
 HOST = os.environ.get("PFA_HOST", "127.0.0.1")
@@ -18,6 +20,10 @@ PORT = int(os.environ.get("PFA_PORT", "8000"))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PANELS_FILE = os.path.join(BASE_DIR, "panels.json")
 CLIENT_DIR = os.path.normpath(os.path.join(BASE_DIR, "..", "frontend"))
+AI_DOCS_DIR = os.path.normpath(os.path.join(BASE_DIR, "..", "ai_docs"))
+if AI_DOCS_DIR not in sys.path:
+    sys.path.insert(0, AI_DOCS_DIR)
+import llm_client  # noqa: E402
 MAX_BODY = 20 * 1024 * 1024
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -132,6 +138,74 @@ class Handler(BaseHTTPRequestHandler):
             if month and not re.fullmatch(r"\d{4}-\d{2}", month):
                 raise ValueError("月份格式应为 YYYY-MM")
             return self._send(200, {"transactions": storage.load_transactions(month)})
+        if path == "/api/llm/config":
+            if method == "GET":
+                return self._send(200, storage.get_llm_public_config())
+            if method == "PUT":
+                storage.save_llm_config(self._json_body())
+                return self._send(200, storage.get_llm_public_config())
+        if path == "/api/qa/status" and method == "GET":
+            return self._send(200, llm_client.status(storage.get_llm_config()))
+        if path == "/api/qa" and method == "POST":
+            body = self._json_body()
+            question = str(body.get("question") or "").strip()
+            if not question or len(question) > 200:
+                raise ValueError("问题需为 1-200 个字符")
+            result = llm_client.ask(
+                question, storage.load_transactions(), storage.get_settings(),
+                storage.get_llm_config(),
+            )
+            return self._send(200, result)
+        if path == "/api/conversations":
+            if method == "GET":
+                return self._send(200, {"conversations": storage.list_conversations()})
+            if method == "POST":
+                return self._send(201, {"conversation": storage.create_conversation()})
+        message_route = re.fullmatch(
+            r"/api/conversations/([a-fA-F0-9]+)/messages", path
+        )
+        if message_route and method == "POST":
+            conversation_id = message_route.group(1)
+            body = self._json_body()
+            question = str(body.get("question") or "").strip()
+            if not question or len(question) > 400:
+                raise ValueError("问题需为 1-400 个字符")
+            conversation = storage.get_conversation_messages(conversation_id)
+            if conversation is None:
+                return self._send(404, {"error": "找不到这个对话"})
+            history = [
+                {"role": item["role"], "content": item["content"]}
+                for item in conversation["messages"]
+            ]
+            result = llm_client.ask(
+                question, storage.load_transactions(), storage.get_settings(),
+                storage.get_llm_config(), history,
+            )
+            storage.add_message(conversation_id, "user", question)
+            message = storage.add_message(
+                conversation_id, "assistant", result["answer"],
+                source=result.get("source", "local"),
+                model=result.get("model", ""),
+                evidence=result.get("evidence", []),
+            )
+            return self._send(200, {"message": message})
+        conversation_route = re.fullmatch(
+            r"/api/conversations/([a-fA-F0-9]+)", path
+        )
+        if conversation_route:
+            conversation_id = conversation_route.group(1)
+            if method == "GET":
+                conversation = storage.get_conversation_messages(conversation_id)
+                if conversation is None:
+                    return self._send(404, {"error": "找不到这个对话"})
+                return self._send(200, conversation)
+            if method == "DELETE":
+                if not storage.delete_conversation(conversation_id):
+                    return self._send(404, {"error": "找不到这个对话"})
+                return self._send(200, {"ok": True})
+        if path == "/api/reminders" and method == "GET":
+            reminders = qa.build_reminders(storage.load_transactions(), storage.get_settings())
+            return self._send(200, {"reminders": reminders})
         match = re.fullmatch(r"/api/transactions/([a-fA-F0-9]+)", path)
         if match and method == "PUT":
             transaction = storage.update_transaction(match.group(1), self._json_body())
@@ -177,6 +251,7 @@ class Handler(BaseHTTPRequestHandler):
         extension = os.path.splitext(full)[1].lower()
         self.send_response(200)
         self.send_header("Content-Type", MIME.get(extension, "application/octet-stream"))
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

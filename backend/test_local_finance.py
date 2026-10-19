@@ -1,9 +1,10 @@
 import os
+import json
 import glob
 import tempfile
 import threading
 import unittest
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -11,6 +12,27 @@ import bill_parser
 from dedup import dedup
 import server
 import storage
+import llm_client
+
+
+class _MockLLMHandler(BaseHTTPRequestHandler):
+    last_body = None
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or "0")
+        _MockLLMHandler.last_body = json.loads(self.rfile.read(length).decode("utf-8"))
+        payload = json.dumps({
+            "choices": [{"message": {"role": "assistant",
+                                     "content": "根据账单，2026年10月支出 18.00 元。"}}],
+        }).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args):
+        pass
 
 
 class LocalFinanceTests(unittest.TestCase):
@@ -19,9 +41,13 @@ class LocalFinanceTests(unittest.TestCase):
         self.previous_path = storage.DB_PATH
         storage.DB_PATH = os.path.join(self.temp_dir.name, "finance.db")
         storage.init_db()
+        self.previous_api_key = os.environ.get("LLM_API_KEY")
+        os.environ.pop("LLM_API_KEY", None)
 
     def tearDown(self):
         storage.DB_PATH = self.previous_path
+        if self.previous_api_key is not None:
+            os.environ["LLM_API_KEY"] = self.previous_api_key
         self.temp_dir.cleanup()
 
     def test_parse_wechat_csv_and_preserve_income_expense(self):
@@ -78,6 +104,42 @@ class LocalFinanceTests(unittest.TestCase):
         self.assertEqual(item["value"], 24)
         self.assertEqual(storage.load_items()[0]["id"], item["id"])
 
+    def test_qa_uses_llm_when_configured(self):
+        llm_httpd = ThreadingHTTPServer(("127.0.0.1", 0), _MockLLMHandler)
+        thread = threading.Thread(target=llm_httpd.serve_forever, daemon=True)
+        thread.start()
+        previous = {key: os.environ.get(key)
+                    for key in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL")}
+        os.environ["LLM_API_KEY"] = "test-key"
+        os.environ["LLM_BASE_URL"] = "http://127.0.0.1:%s/v1" % llm_httpd.server_address[1]
+        os.environ["LLM_MODEL"] = "mock-model"
+        try:
+            result = llm_client.ask("2026年10月支出多少？", [{
+                "id": "1", "date": "2026-10-14", "amount": 18,
+                "direction": "expense", "category": "餐饮", "merchant": "小店", "note": "",
+            }], history=[
+                {"role": "user", "content": "我之前问过支出"},
+                {"role": "assistant", "content": "上一条回答"},
+            ])
+            self.assertEqual(result["source"], "llm")
+            self.assertEqual(result["model"], "mock-model")
+            self.assertIn("18.00", result["answer"])
+            self.assertEqual(result["fallbackAnswer"], "2026年10月共支出 ¥18.00，共 1 笔")
+            messages = _MockLLMHandler.last_body["messages"]
+            self.assertEqual(messages[0]["role"], "system")
+            self.assertEqual(messages[1], {"role": "user", "content": "我之前问过支出"})
+            self.assertEqual(messages[2], {"role": "assistant", "content": "上一条回答"})
+            self.assertEqual(messages[-1]["role"], "user")
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            llm_httpd.shutdown()
+            llm_httpd.server_close()
+            thread.join()
+
     def test_local_http_api_uploads_without_authentication(self):
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -106,6 +168,71 @@ class LocalFinanceTests(unittest.TestCase):
                 self.assertIn('"imported": 1', result)
             with urlopen(root + "/api/transactions?month=2026-10") as response:
                 self.assertIn("小店", response.read().decode("utf-8"))
+            with urlopen(root + "/api/qa/status") as response:
+                status = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(status.get("configured"), False)
+            with urlopen(root + "/api/llm/config") as response:
+                llm_config = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(llm_config.get("enabled"), False)
+                self.assertEqual(llm_config.get("hasApiKey"), False)
+            qa_body = json.dumps({"question": "2026年10月支出多少？"}).encode("utf-8")
+            qa_request = Request(
+                root + "/api/qa", data=qa_body, method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(qa_request) as response:
+                qa_result = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(response.status, 200)
+                self.assertEqual(qa_result.get("source"), "local")
+                self.assertIn("18", qa_result["answer"])
+            conversation_request = Request(
+                root + "/api/conversations", data=b"", method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(conversation_request) as response:
+                conversation = json.loads(response.read().decode("utf-8"))["conversation"]
+                self.assertIn("id", conversation)
+            conversation_id = conversation["id"]
+            message_request = Request(
+                root + "/api/conversations/%s/messages" % conversation_id,
+                data=json.dumps({"question": "这个月花了多少？"}).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(message_request) as response:
+                message = json.loads(response.read().decode("utf-8"))["message"]
+                self.assertEqual(message["role"], "assistant")
+                self.assertIn("18", message["content"])
+            with urlopen(root + "/api/conversations") as response:
+                conversations = json.loads(response.read().decode("utf-8"))["conversations"]
+                self.assertEqual(conversations[0]["title"], "这个月花了多少？")
+                self.assertEqual(conversations[0]["messageCount"], 2)
+            with urlopen(root + "/api/conversations/" + conversation_id) as response:
+                detail = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(len(detail["messages"]), 2)
+            delete_request = Request(
+                root + "/api/conversations/" + conversation_id, method="DELETE",
+            )
+            with urlopen(delete_request) as response:
+                self.assertEqual(response.status, 200)
+            llm_save = Request(
+                root + "/api/llm/config",
+                data=json.dumps({
+                    "enabled": True,
+                    "baseUrl": "https://api.deepseek.com/v1",
+                    "model": "deepseek-chat",
+                    "timeout": 30,
+                    "apiKey": "sk-test",
+                }).encode("utf-8"),
+                method="PUT",
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(llm_save) as response:
+                llm_saved = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(llm_saved["enabled"], True)
+                self.assertEqual(llm_saved["model"], "deepseek-chat")
+                self.assertEqual(llm_saved["hasApiKey"], True)
+                self.assertNotIn("apiKey", llm_saved)
             with self.assertRaises(HTTPError) as error:
                 urlopen(root + "/api/login")
             self.assertEqual(error.exception.code, 404)

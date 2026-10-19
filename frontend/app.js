@@ -6,7 +6,10 @@
   const money = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' });
   const bucketNames = { daily: '日常开支', monthly: '月度开支', large: '大型开支', income: '收入' };
   const categoryChoices = ['日常开支', '月度开支', '大型开支', '餐饮', '交通', '购物', '医疗', '娱乐', '收入'];
-  const state = { profile: {}, settings: {}, transactions: [], items: [], panels: {} };
+  const state = {
+    profile: {}, settings: {}, transactions: [], items: [], panels: {},
+    llmConfig: {}, conversations: [], activeConversationId: null, messages: [],
+  };
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
@@ -197,6 +200,213 @@
     });
   }
 
+  function renderReminders() {
+    const reminders = state.reminders || [];
+    $('#reminders-list').innerHTML = reminders.map(item =>
+      `<div class="reminder ${escapeHtml(item.level)}">
+        <strong>${escapeHtml(item.title)}</strong>
+        <span>${escapeHtml(item.text)}</span>
+      </div>`).join('');
+  }
+
+  function conversationById(conversationId) {
+    return (state.conversations || []).find(item => item.id === conversationId);
+  }
+
+  function renderConversationList() {
+    const list = $('#conversation-list');
+    const conversations = state.conversations || [];
+    list.innerHTML = conversations.length
+      ? conversations.map(conversation => `
+        <button class="conversation-item${conversation.id === state.activeConversationId ? ' active' : ''}"
+          data-id="${escapeHtml(conversation.id)}" type="button" title="${escapeHtml(conversation.title)}">
+          <span>💬</span>
+          <span class="conversation-title">${escapeHtml(conversation.title)}</span>
+        </button>`).join('')
+      : '<p class="empty-note">还没有对话</p>';
+  }
+
+  function renderChatWelcome() {
+    $('#chat-messages').innerHTML = `
+      <div class="chat-welcome">
+        <h3>今天想了解什么？</h3>
+        <p>答案都来自你导入的账单，并附来源依据。试试下面这些问题：</p>
+        <div class="suggestion-list">
+          <button class="suggestion" type="button" data-question="这个月花了多少？">这个月花了多少？</button>
+          <button class="suggestion" type="button" data-question="上个月餐饮花了多少？">上个月餐饮花了多少？</button>
+          <button class="suggestion" type="button" data-question="哪类支出最高？">哪类支出最高？</button>
+        </div>
+      </div>`;
+  }
+
+  function renderMessage(message) {
+    if (message.role === 'user') {
+      return `<div class="chat-row user"><div class="chat-bubble user-bubble">${escapeHtml(message.content)}</div></div>`;
+    }
+    if (message.pending) {
+      return `<div class="chat-row assistant"><div class="chat-bubble assistant-bubble pending">正在思考…</div></div>`;
+    }
+    const evidence = (message.evidence || []).map(item =>
+      `<li>${escapeHtml(item.date)} ${escapeHtml(item.merchant || item.category || '未命名')} ` +
+      `${item.direction === 'income' ? '+' : '−'}${escapeHtml(formatMoney(item.amount))}</li>`).join('');
+    const sourceLabel = message.source === 'llm'
+      ? `由大模型生成（${escapeHtml(message.model || 'LLM')}）`
+      : '由本地核算生成';
+    return `<div class="chat-row assistant">
+      <div class="chat-bubble assistant-bubble">
+        <div class="chat-answer">${escapeHtml(message.content)}</div>
+        <div class="qa-source">${sourceLabel}</div>
+        ${evidence ? `<div class="qa-evidence-label">来源依据（${message.evidence.length} 笔）：</div><ul class="qa-evidence">${evidence}</ul>` : ''}
+      </div>
+    </div>`;
+  }
+
+  function renderMessages() {
+    const box = $('#chat-messages');
+    if (!(state.messages && state.messages.length)) {
+      renderChatWelcome();
+      return;
+    }
+    box.innerHTML = state.messages.map(renderMessage).join('');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function setConversationTitle(conversation) {
+    const element = $('#conversation-title');
+    if (element) element.textContent = conversation ? conversation.title : '新对话';
+  }
+
+  async function openConversation(conversationId) {
+    if (!conversationId) return;
+    state.activeConversationId = conversationId;
+    setConversationTitle(conversationById(conversationId));
+    renderConversationList();
+    try {
+      const result = await request(`/conversations/${encodeURIComponent(conversationId)}`);
+      state.messages = result.messages;
+      renderMessages();
+    } catch (error) {
+      toast(error.message, true);
+      state.messages = [];
+      renderMessages();
+    }
+  }
+
+  async function refreshConversations() {
+    const result = await request('/conversations');
+    state.conversations = result.conversations;
+    renderConversationList();
+  }
+
+  async function newConversation() {
+    try {
+      const result = await request('/conversations', { method: 'POST', body: {} });
+      state.conversations.unshift(result.conversation);
+      state.activeConversationId = result.conversation.id;
+      state.messages = [];
+      setConversationTitle(result.conversation);
+      renderConversationList();
+      renderMessages();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  }
+
+  async function deleteCurrentConversation() {
+    const conversationId = state.activeConversationId;
+    if (!conversationId) return;
+    if (!window.confirm('确定删除当前对话吗？此操作不可恢复。')) return;
+    try {
+      await request(`/conversations/${encodeURIComponent(conversationId)}`, { method: 'DELETE' });
+      state.conversations = state.conversations.filter(item => item.id !== conversationId);
+      if (state.conversations.length) {
+        await openConversation(state.conversations[0].id);
+      } else {
+        await newConversation();
+      }
+    } catch (error) {
+      toast(error.message, true);
+    }
+  }
+
+  let sendingMessage = false;
+  async function sendMessage() {
+    const input = $('#chat-input');
+    const question = (input.value || '').trim();
+    if (!question || sendingMessage) return;
+    if (!state.activeConversationId) {
+      await newConversation();
+    }
+    sendingMessage = true;
+    input.value = '';
+    state.messages.push({ role: 'user', content: question });
+    state.messages.push({ role: 'assistant', pending: true });
+    renderMessages();
+    try {
+      const result = await request(
+        `/conversations/${encodeURIComponent(state.activeConversationId)}/messages`,
+        { method: 'POST', body: { question } },
+      );
+      state.messages = state.messages.filter(item => !item.pending);
+      state.messages.push(result.message);
+      renderMessages();
+      await refreshConversations();
+    } catch (error) {
+      state.messages = state.messages.filter(item => !item.pending);
+      state.messages.push({ role: 'assistant', content: `出错了：${error.message}`, source: 'local', evidence: [] });
+      renderMessages();
+    } finally {
+      sendingMessage = false;
+      input.focus();
+    }
+  }
+
+  async function initAssistant() {
+    renderConversationList();
+    if (!(state.conversations && state.conversations.length)) {
+      await newConversation();
+      return;
+    }
+    await openConversation(state.conversations[0].id);
+  }
+
+  function renderQaMode() {
+    const element = $('#qa-mode');
+    if (!element) return;
+    const config = state.llmConfig || {};
+    element.textContent = config.enabled && config.hasApiKey
+      ? `已接入大模型：${config.model}`
+      : '当前为本地核算模式；可在左下角「大模型配置」中启用';
+  }
+
+  function renderLlmForm() {
+    const form = $('#llm-form');
+    if (!form) return;
+    const config = state.llmConfig || {};
+    form.elements.enabled.checked = !!config.enabled;
+    form.elements.baseUrl.value = config.baseUrl || 'https://api.openai.com/v1';
+    form.elements.model.value = config.model || 'gpt-4o-mini';
+    form.elements.timeout.value = config.timeout || 20;
+    form.elements.apiKey.value = '';
+    form.elements.clearApiKey.checked = false;
+    const status = $('#llm-status');
+    if (status) {
+      status.textContent = config.enabled && config.hasApiKey
+        ? `已启用 · ${config.model}`
+        : config.enabled ? '已启用 · 未保存密钥' : '未启用';
+    }
+  }
+
+  async function reloadReminders() {
+    try {
+      const result = await request('/reminders');
+      state.reminders = result.reminders;
+      renderReminders();
+    } catch (error) {
+      $('#reminders-list').innerHTML = `<p class="empty-note">${escapeHtml(error.message)}</p>`;
+    }
+  }
+
   function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
     $('#theme-select').value = theme;
@@ -208,6 +418,9 @@
     renderRules();
     renderAssets();
     renderPanels();
+    renderReminders();
+    renderQaMode();
+    renderLlmForm();
   }
 
   async function reloadTransactions() {
@@ -353,6 +566,65 @@
         toast('资产记录已删除');
       } catch (error) { toast(error.message, true); }
     });
+    $('#new-chat').addEventListener('click', newConversation);
+    $('#delete-conversation').addEventListener('click', deleteCurrentConversation);
+    $('#conversation-list').addEventListener('click', event => {
+      const button = event.target.closest('.conversation-item');
+      if (button && button.dataset.id !== state.activeConversationId) {
+        openConversation(button.dataset.id);
+      }
+    });
+    $('#chat-messages').addEventListener('click', event => {
+      const suggestion = event.target.closest('.suggestion');
+      if (!suggestion) return;
+      $('#chat-input').value = suggestion.dataset.question || '';
+      $('#chat-input').focus();
+    });
+    $('#chat-composer').addEventListener('submit', event => {
+      event.preventDefault();
+      sendMessage();
+    });
+    $('#chat-input').addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+    $('#llm-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const data = new FormData(form);
+      const body = {
+        enabled: data.get('enabled') === 'on',
+        baseUrl: data.get('baseUrl'),
+        model: data.get('model'),
+        timeout: Number(data.get('timeout')),
+        clearApiKey: data.get('clearApiKey') === 'on',
+      };
+      const apiKey = String(data.get('apiKey') || '').trim();
+      if (apiKey) body.apiKey = apiKey;
+      try {
+        state.llmConfig = await request('/llm/config', { method: 'PUT', body });
+        renderLlmForm();
+        renderQaMode();
+        toast('大模型配置已保存');
+      } catch (error) {
+        toast(error.message, true);
+        renderLlmForm();
+      }
+    });
+    $('#monthly-budget').addEventListener('change', async event => {
+      const raw = event.target.value;
+      const value = raw === '' ? null : Number(raw);
+      try {
+        await saveSettings({ monthlyBudget: value });
+        await reloadReminders();
+        toast('每月预算已更新');
+      } catch (error) {
+        toast(error.message, true);
+        event.target.value = state.settings.monthlyBudget || '';
+      }
+    });
     document.addEventListener('change', async event => {
       const select = event.target.closest('.category-select');
       if (!select || !select.value) return;
@@ -374,17 +646,22 @@
     $('#month-select-secondary').value = currentMonth;
     bindEvents();
     try {
-      const [profile, settings, transactions, items, panels] = await Promise.all([
+      const [profile, settings, transactions, items, panels, llmConfig, conversations] = await Promise.all([
         request('/profile'), request('/settings'), request('/transactions'),
-        request('/items'), request('/panels'),
+        request('/items'), request('/panels'), request('/llm/config'), request('/conversations'),
       ]);
       state.profile = profile.profile;
       state.settings = settings;
       state.transactions = transactions.transactions;
       state.items = items.items;
       state.panels = panels;
+      state.llmConfig = llmConfig;
+      state.conversations = conversations.conversations;
       applyTheme(settings.theme || 'light');
+      $('#monthly-budget').value = settings.monthlyBudget || '';
+      reloadReminders();
       render();
+      await initAssistant();
     } catch (error) {
       toast(`加载本地数据失败：${error.message}`, true);
       $('#recent-transactions').innerHTML = `<p class="empty-note">${escapeHtml(error.message)}</p>`;

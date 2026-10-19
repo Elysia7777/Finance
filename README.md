@@ -4,7 +4,7 @@
 
 - **A · 前端与体验** → `frontend/`：Streamlit 界面（导入、图表、问答与提醒）为待建主界面；现有网页版界面（HTML + 浅红温馨主题）与客户端金融计算契约也在本目录
 - **B · 后端与数据** → `backend/`：账单解析、去重校验、SQLite 存储（待开发）；现有极简账号服务器（Python 标准库单文件）已可运行
-- **C · AI、测试、文档** → `ai_docs/`：LLM 集成（待开发）；C 组另负责执行测试计划并维护文档（README 与 `PPT/`）
+- **C · AI、测试、文档** → `ai_docs/`：LLM 集成（已接入兼容 OpenAI 的接口，未配置时回退本地规则问答）；C 组另负责执行测试计划并维护文档（README 与 `PPT/`）
 
 ## 文件层级图（只有需要开发的文件）
 
@@ -26,7 +26,7 @@ Finance/
 │   ├── dedup.py              # 🚧 去重校验（空占位）：流水去重与冲突处理
 │   └── storage.py            # 🚧 SQLite 存储（空占位）：表结构设计与读写（当前账号数据为 JSON 文件）
 └── ai_docs/                  # 【C · AI、测试、文档】
-    └── llm_client.py         # 🚧 LLM 集成（空占位）：流水问答、消费提醒生成
+    └── llm_client.py         # ✅ LLM 问答：调用兼容 OpenAI 的接口，失败/未配置时回退 backend/qa.py
 ```
 
 > `PPT/` 为团队已有资料（提案大纲、风险与测试计划等），不属开发代码，不在图中展开。
@@ -43,7 +43,7 @@ Finance/
 | B | SQLite 存储 | `backend/storage.py` | 表结构设计与读写；与 server.py 的 JSON 存储并存或迁移 |
 | B | 账号体系增强 | `backend/server.py` | 资料修改、项目增删改查、设置持久化（501 占位） |
 | B | 行情数据 | `backend/panels.json` | 股票/货币/贵金属真实行情接入 |
-| C | LLM 集成 | `ai_docs/llm_client.py` | 流水问答、提醒生成；模型选型与 Prompt 设计 |
+| C | LLM 集成 | `ai_docs/llm_client.py` | 流水问答：调用兼容 OpenAI 的接口（OpenAI/DeepSeek/Moonshot 等），未配置或失败时回退本地规则问答 |
 | C | 测试与文档 | 仓库各处 + `PPT/` | 执行测试计划；维护 README 与团队文档 |
 
 ## 快速开始
@@ -56,6 +56,30 @@ python backend/server.py    # 启动账号服务器（同时托管网页版界�
 
 浏览器打开 <http://127.0.0.1:8000>：顶栏「登录 / 注册」注册账号后即可查看完整布局。
 Streamlit 界面为 A 组待建项，实现后运行方式：`pip install streamlit` → `streamlit run frontend/app.py`。
+
+### 启用大模型问答（可选）
+
+不配置也能用：助手会自动回退到本地的确定性核算问答。推荐直接在网页端配置：启动服务器后进入「助手」页（左侧为历史对话，左下角为「大模型配置」），勾选启用并填写 API Key、接口地址与模型即可，密钥只保存在本机。助手页支持多轮连续追问与新建对话。
+
+兼容 OpenAI 的接口均可使用（OpenAI、DeepSeek、Moonshot 等）。也可以继续用环境变量启动（页面配置优先）：
+
+```bash
+# Windows PowerShell
+$env:LLM_API_KEY="你的密钥"
+$env:LLM_BASE_URL="https://api.deepseek.com/v1"   # 默认 https://api.openai.com/v1
+$env:LLM_MODEL="deepseek-chat"                     # 默认 gpt-4o-mini
+python backend/server.py
+```
+
+```bash
+# macOS / Linux
+export LLM_API_KEY="你的密钥"
+export LLM_BASE_URL="https://api.openai.com/v1"
+export LLM_MODEL="gpt-4o-mini"
+python backend/server.py
+```
+
+金额与汇总仍以 `backend/qa.py` 的确定性核算为准，大模型只负责组织自然语言回答与开放性建议；没有密钥或调用失败时会自动回退，不影响其余功能。
 
 ## GitHub 开发全流程
 

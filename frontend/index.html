@@ -20,6 +20,7 @@
         <button class="nav-link" data-view="transactions">流水</button>
         <button class="nav-link" data-view="rules">分类规则</button>
         <button class="nav-link" data-view="assets">我的资产</button>
+        <button class="nav-link" data-view="assistant">助手</button>
       </nav>
       <div class="top-actions">
         <label class="theme-picker">外观
@@ -169,6 +170,65 @@
             <article class="card"><h3>贵金属参考</h3><div id="panel-metals"></div></article>
           </div>
         </details>
+      </section>
+
+      <section class="view hidden" id="view-assistant">
+        <div class="assistant-layout">
+          <aside class="assistant-sidebar">
+            <button class="button primary new-chat-button" id="new-chat" type="button">＋ 开启新对话</button>
+            <div class="conversation-list" id="conversation-list"></div>
+            <div class="assistant-sidebar-bottom">
+              <details class="assistant-panel" id="reminders-panel">
+                <summary>消费提醒</summary>
+                <label class="budget-setting">每月预算
+                  <input id="monthly-budget" type="number" min="0" step="100" placeholder="未设置">
+                </label>
+                <div id="reminders-list" class="reminders-list"></div>
+              </details>
+              <details class="assistant-panel" id="llm-panel">
+                <summary><span>大模型配置</span><span class="muted" id="llm-status"></span></summary>
+                <form id="llm-form" class="llm-form">
+                  <label class="llm-switch">
+                    <span>启用大模型回答</span>
+                    <input id="llm-enabled" name="enabled" type="checkbox">
+                  </label>
+                  <label>API Key
+                    <input name="apiKey" type="password" autocomplete="off" placeholder="留空则保持原密钥">
+                  </label>
+                  <label>接口地址
+                    <input name="baseUrl" type="url" placeholder="https://api.openai.com/v1">
+                  </label>
+                  <label>模型
+                    <input name="model" type="text" maxlength="100" placeholder="gpt-4o-mini">
+                  </label>
+                  <label>超时（秒）
+                    <input name="timeout" type="number" min="1" max="300" step="1">
+                  </label>
+                  <label class="llm-clear">
+                    <span>清除已保存密钥</span>
+                    <input name="clearApiKey" type="checkbox">
+                  </label>
+                  <button class="button primary" type="submit">保存配置</button>
+                </form>
+                <p class="muted llm-hint">密钥只保存在本机；未配置或失败时自动回退本地核算。</p>
+              </details>
+            </div>
+          </aside>
+          <section class="assistant-chat">
+            <header class="assistant-chat-header">
+              <div>
+                <h2 id="conversation-title">新对话</h2>
+                <p class="muted" id="qa-mode"></p>
+              </div>
+              <button class="icon-button" id="delete-conversation" type="button" title="删除当前对话" aria-label="删除当前对话">×</button>
+            </header>
+            <div class="chat-messages" id="chat-messages"></div>
+            <form class="chat-composer" id="chat-composer">
+              <textarea id="chat-input" rows="1" maxlength="400" placeholder="问点什么，比如：上个月餐饮花了多少？" autocomplete="off"></textarea>
+              <button class="button primary" type="submit">发送</button>
+            </form>
+          </section>
+        </div>
       </section>
 
       <footer class="page-footer">本机单用户 · 不需要账号 · 不上传至云端</footer>

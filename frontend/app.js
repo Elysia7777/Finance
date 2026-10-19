@@ -221,8 +221,13 @@
       const cost = Number(item.quantity) * Number(item.costPrice);
       const profit = Number(item.value) - cost;
       return `<article class="asset-card">
-        <div class="asset-card-top"><div><h3>${escapeHtml(item.name)}</h3><span class="asset-type">${assetTypes[item.type] || '其他'} · ${escapeHtml(item.quantity)} 份</span></div>
-        <button class="icon-button delete-asset" data-id="${escapeHtml(item.id)}" aria-label="删除资产">×</button></div>
+        <div class="asset-card-top">
+          <div><h3>${escapeHtml(item.name)}</h3><span class="asset-type">${assetTypes[item.type] || '其他'}${item.code ? ' · ' + escapeHtml(item.code) : ''} · ${escapeHtml(item.quantity)} 份</span></div>
+          <div class="asset-actions">
+            <button class="text-button edit-asset" data-id="${escapeHtml(item.id)}" type="button">编辑</button>
+            <button class="icon-button delete-asset" data-id="${escapeHtml(item.id)}" aria-label="删除资产">×</button>
+          </div>
+        </div>
         <div class="asset-value">${formatMoney(item.value)}</div>
         <div class="asset-return">成本 ${formatMoney(cost)} · ${profit >= 0 ? '浮盈' : '浮亏'} ${formatMoney(Math.abs(profit))}</div>
       </article>`;
@@ -230,19 +235,33 @@
   }
 
   function renderPanels() {
-    const definitions = [
-      ['stocks', 'panel-stocks', 'code', 'name', 'price'],
-      ['currencies', 'panel-currencies', 'code', 'name', 'rate'],
-      ['metals', 'panel-metals', 'code', 'name', 'price'],
-    ];
-    definitions.forEach(([key, target, codeKey, nameKey, valueKey]) => {
-      const panel = state.panels[key] || {};
-      const rows = panel.rows || [];
-      $(`#${target}`).innerHTML = rows.length ? rows.map(row => `
-        <div class="market-row"><span>${escapeHtml(row[nameKey] || row[codeKey])} <small>${escapeHtml(row[codeKey] || '')}</small></span>
-        <span>${row[valueKey] == null ? '待接入' : escapeHtml(row[valueKey])}</span></div>`).join('') :
-        '<p class="empty-note">接口已保留，行情服务暂未开放。</p>';
-    });
+    const stocks = (state.panels.stocks || {}).rows || [];
+    $('#panel-stocks').innerHTML = stocks.length ? stocks.map(row => {
+      const change = row.changePct == null ? '' :
+        `<small class="${Number(row.changePct) >= 0 ? 'up' : 'down'}">${Number(row.changePct) > 0 ? '+' : ''}${Number(row.changePct).toFixed(2)}%</small>`;
+      return `<div class="market-row">
+        <span>${escapeHtml(row.name)} <small>${escapeHtml(row.code)}</small></span>
+        <span>${row.price == null ? '待接入' : escapeHtml(row.price)} ${change}<small class="market-source">${escapeHtml(row.source || '')}</small></span>
+      </div>`;
+    }).join('') : '<p class="empty-note">暂无股票行情。</p>';
+
+    const currencies = (state.panels.currencies || {}).rows || [];
+    $('#panel-currencies').innerHTML = currencies.length ? currencies.map(row => {
+      const value = row.rate == null ? '待接入' : Number(row.rate).toFixed(4);
+      return `<div class="market-row">
+        <span>${escapeHtml(row.name)} <small>${escapeHtml(row.code)}</small></span>
+        <span>${escapeHtml(value)}<small class="market-source">${escapeHtml(row.source || '')}</small></span>
+      </div>`;
+    }).join('') : '<p class="empty-note">暂无汇率行情。</p>';
+
+    const metals = (state.panels.metals || {}).rows || [];
+    $('#panel-metals').innerHTML = metals.length ? metals.map(row => {
+      const value = row.price == null ? '待接入' : `${escapeHtml(row.price)} ${escapeHtml(row.unit || '')}`;
+      return `<div class="market-row">
+        <span>${escapeHtml(row.name)} <small>${escapeHtml(row.code)}</small></span>
+        <span>${value}<small class="market-source">${escapeHtml(row.source || '')}</small></span>
+      </div>`;
+    }).join('') : '<p class="empty-note">暂无贵金属行情。</p>';
   }
 
   function renderReminders() {
@@ -516,6 +535,44 @@
     }
   }
 
+  let editingAssetId = null;
+
+  function openAssetEditor(itemId) {
+    const item = state.items.find(entry => entry.id === itemId);
+    if (!item) return;
+    editingAssetId = itemId;
+    const form = $('#asset-edit-form');
+    form.elements.name.value = item.name;
+    form.elements.type.value = item.type;
+    form.elements.code.value = item.code || '';
+    form.elements.quantity.value = item.quantity;
+    form.elements.costPrice.value = item.costPrice;
+    form.elements.currentPrice.value = item.currentPrice;
+    form.elements.note.value = item.note || '';
+    $('#asset-dialog').showModal();
+  }
+
+  async function fetchAssetPrice(form) {
+    const type = form.elements.type.value;
+    const code = String(form.elements.code.value || '').trim();
+    if (type === 'cash') {
+      form.elements.currentPrice.value = 1;
+      toast('现金单价按 1 计算');
+      return;
+    }
+    if (type === 'other' || !code) {
+      toast('股票 / 基金需填写代码后才能自动获取', true);
+      return;
+    }
+    try {
+      const result = await request(`/quote?type=${encodeURIComponent(type)}&code=${encodeURIComponent(code)}`);
+      form.elements.currentPrice.value = result.price;
+      toast(`已获取：${result.price}（${result.source}${result.time ? ' · ' + result.time : ''}）`);
+    } catch (error) {
+      toast(error.message, true);
+    }
+  }
+
   function showView(view) {
     $$('.view').forEach(section => section.classList.toggle('hidden', section.id !== `view-${view}`));
     $$('.nav-link').forEach(button => button.classList.toggle('active', button.dataset.view === view));
@@ -675,6 +732,8 @@
       } catch (error) { toast(error.message, true); }
     });
     $('#assets-list').addEventListener('click', async event => {
+      const edit = event.target.closest('.edit-asset');
+      if (edit) { openAssetEditor(edit.dataset.id); return; }
       const button = event.target.closest('.delete-asset');
       if (!button || !window.confirm('确定删除这项资产记录吗？')) return;
       try {
@@ -683,6 +742,38 @@
         renderAssets();
         toast('资产记录已删除');
       } catch (error) { toast(error.message, true); }
+    });
+    $('#asset-edit-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!editingAssetId) return;
+      const data = new FormData(event.currentTarget);
+      const item = {
+        name: data.get('name'),
+        type: data.get('type'),
+        code: data.get('code'),
+        quantity: Number(data.get('quantity')),
+        costPrice: Number(data.get('costPrice')),
+        currentPrice: Number(data.get('currentPrice')),
+        note: data.get('note'),
+      };
+      try {
+        const result = await request(`/items/${encodeURIComponent(editingAssetId)}`, {
+          method: 'PUT', body: item,
+        });
+        const index = state.items.findIndex(entry => entry.id === editingAssetId);
+        if (index >= 0) state.items[index] = result.item;
+        renderAssets();
+        $('#asset-dialog').close();
+        toast('资产已更新');
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+    $$('#asset-dialog [data-dialog-close]').forEach(button =>
+      button.addEventListener('click', () => $('#asset-dialog').close()));
+    document.addEventListener('click', event => {
+      const fetchButton = event.target.closest('[data-price-fetch]');
+      if (fetchButton) fetchAssetPrice(fetchButton.closest('form'));
     });
     $('#new-chat').addEventListener('click', newConversation);
     $('#delete-conversation').addEventListener('click', deleteCurrentConversation);

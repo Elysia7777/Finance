@@ -85,6 +85,7 @@ def init_db():
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 type TEXT NOT NULL,
+                code TEXT NOT NULL DEFAULT '',
                 quantity REAL NOT NULL,
                 cost_price REAL NOT NULL,
                 current_price REAL NOT NULL,
@@ -122,6 +123,13 @@ def init_db():
         if "category_overridden" not in transaction_columns:
             connection.execute(
                 "ALTER TABLE transactions ADD COLUMN category_overridden INTEGER NOT NULL DEFAULT 0"
+            )
+        item_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(items)")
+        }
+        if "code" not in item_columns:
+            connection.execute(
+                "ALTER TABLE items ADD COLUMN code TEXT NOT NULL DEFAULT ''"
             )
 
 
@@ -558,27 +566,29 @@ def delete_transaction(transaction_id):
     return cursor.rowcount > 0
 
 
-def load_items():
-    init_db()
-    with _connect() as connection:
-        rows = connection.execute("SELECT * FROM items ORDER BY created_at DESC").fetchall()
-    return [{
+def _item_dict(row):
+    return {
         "id": row["id"], "name": row["name"], "type": row["type"],
-        "quantity": row["quantity"], "costPrice": row["cost_price"],
-        "currentPrice": row["current_price"], "value": row["quantity"] * row["current_price"],
+        "code": row["code"], "quantity": row["quantity"],
+        "costPrice": row["cost_price"], "currentPrice": row["current_price"],
+        "value": row["quantity"] * row["current_price"],
         "currency": row["currency"], "note": row["note"],
-    } for row in rows]
+    }
 
 
-def save_item(item):
-    name = str(item.get("name") or "").strip()
-    kind = item.get("type")
+def _normalize_item(changes, existing=None):
+    current = existing or {}
+    name = str(changes.get("name", current.get("name")) or "").strip()
+    kind = changes.get("type", current.get("type"))
     if not name or len(name) > 80 or kind not in ("fund", "stock", "cash", "other"):
         raise ValueError("请提供有效的名称和资产类型")
+    code = str(changes.get("code", current.get("code")) or "").strip()
+    if len(code) > 20:
+        raise ValueError("代码不能超过 20 个字符")
     try:
-        quantity = float(item.get("quantity", 1))
-        cost_price = float(item.get("costPrice", 0))
-        current_price = float(item.get("currentPrice", cost_price))
+        quantity = float(changes.get("quantity", current.get("quantity", 1)))
+        cost_price = float(changes.get("costPrice", current.get("cost_price", 0)))
+        current_price = float(changes.get("currentPrice", current.get("current_price", cost_price)))
     except (TypeError, ValueError) as exc:
         raise ValueError("数量、成本价和当前价格必须是数字") from exc
     if any(not math.isfinite(value) or value < 0
@@ -587,18 +597,50 @@ def save_item(item):
     value = quantity * current_price
     if not math.isfinite(value):
         raise ValueError("资产估值超出支持范围")
+    currency = str(changes.get("currency", current.get("currency") or "CNY"))[:8]
+    note = str(changes.get("note", current.get("note") or ""))[:200]
+    return name, kind, code, quantity, cost_price, current_price, currency, note
+
+
+def load_items():
+    init_db()
+    with _connect() as connection:
+        rows = connection.execute("SELECT * FROM items ORDER BY created_at DESC").fetchall()
+    return [_item_dict(row) for row in rows]
+
+
+def save_item(item):
+    name, kind, code, quantity, cost_price, current_price, currency, note = _normalize_item(item)
     item_id = uuid.uuid4().hex
     with _connect() as connection:
         connection.execute(
             """INSERT INTO items
-            (id, name, type, quantity, cost_price, current_price, currency, note, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (item_id, name, kind, quantity, cost_price, current_price,
-             str(item.get("currency") or "CNY")[:8],
-             str(item.get("note") or "")[:200],
+            (id, name, type, code, quantity, cost_price, current_price, currency, note, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (item_id, name, kind, code, quantity, cost_price, current_price,
+             currency, note,
              datetime.now(timezone.utc).isoformat(timespec="seconds")),
         )
     return next(entry for entry in load_items() if entry["id"] == item_id)
+
+
+def update_item(item_id, changes):
+    changes = changes or {}
+    with _connect() as connection:
+        row = connection.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        if not row:
+            return None
+        name, kind, code, quantity, cost_price, current_price, currency, note = _normalize_item(
+            changes, dict(row)
+        )
+        connection.execute(
+            "UPDATE items SET name = ?, type = ?, code = ?, quantity = ?, "
+            "cost_price = ?, current_price = ?, currency = ?, note = ? WHERE id = ?",
+            (name, kind, code, quantity, cost_price, current_price,
+             currency, note, item_id),
+        )
+        row = connection.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+    return _item_dict(row)
 
 
 def delete_item(item_id):

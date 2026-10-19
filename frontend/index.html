@@ -148,7 +148,7 @@
 
       <section class="view hidden" id="view-assets">
         <div class="page-heading">
-          <div><p class="eyebrow">轻量资产记录</p><h1>我的资产</h1><p class="subhead">手动记录基金、股票和现金；不连接券商，也不获取实时行情。</p></div>
+          <div><p class="eyebrow">轻量资产记录</p><h1>我的资产</h1><p class="subhead">记录基金、股票和现金；股票/基金可填代码自动获取参考价。</p></div>
         </div>
         <section class="card asset-total">
           <div><p class="eyebrow">记录资产合计</p><strong id="assets-total">¥0.00</strong></div>
@@ -159,17 +159,20 @@
           <form id="asset-form" class="asset-form">
             <label>名称<input name="name" required maxlength="80" placeholder="例如：沪深 300 指数基金"></label>
             <label>类型<select name="type"><option value="fund">基金</option><option value="stock">股票</option><option value="cash">现金</option><option value="other">其他</option></select></label>
+            <label>代码<input name="code" maxlength="20" placeholder="股票 / 基金代码"></label>
             <label>持有数量<input name="quantity" type="number" min="0" step="any" value="1" required></label>
             <label>成本单价<input name="costPrice" type="number" min="0" step="any" value="0" required></label>
-            <label>当前单价<input name="currentPrice" type="number" min="0" step="any" value="0" required></label>
+            <label>当前单价
+              <span class="price-row"><input name="currentPrice" type="number" min="0" step="any" value="0" required><button class="button" type="button" data-price-fetch>自动获取</button></span>
+            </label>
             <label>备注<input name="note" maxlength="200" placeholder="选填"></label>
             <button class="button primary" type="submit">保存资产</button>
           </form>
         </section>
         <div id="assets-list" class="asset-list"></div>
         <details class="market-section">
-          <summary>市场参考接口（暂未开放）</summary>
-          <p>保留股票、汇率与贵金属数据接口；当前为只读占位，不会自动抓取或交易。</p>
+          <summary>市场参考行情</summary>
+          <p>行情来自公开数据源（腾讯行情、新浪财经、上海金交所），仅供课程展示，不用于交易；源不可用时显示“待接入”。</p>
           <div class="market-grid">
             <article class="card"><h3>股票参考</h3><div id="panel-stocks"></div></article>
             <article class="card"><h3>汇率参考</h3><div id="panel-currencies"></div></article>
@@ -250,6 +253,22 @@
       <label>交易对象<input name="merchant" type="text" maxlength="200"></label>
       <label>备注<input name="note" type="text" maxlength="500"></label>
       <label>分类<input name="category" type="text" maxlength="40" required></label>
+      <button class="button primary" type="submit">保存修改</button>
+    </form>
+  </dialog>
+
+  <dialog id="asset-dialog" class="dialog">
+    <form id="asset-edit-form">
+      <div class="dialog-head"><div><p class="eyebrow">编辑资产</p><h2>修改记录</h2></div><button type="button" class="icon-button" data-dialog-close aria-label="关闭">×</button></div>
+      <label>名称<input name="name" required maxlength="80"></label>
+      <label>类型<select name="type"><option value="fund">基金</option><option value="stock">股票</option><option value="cash">现金</option><option value="other">其他</option></select></label>
+      <label>代码<input name="code" maxlength="20" placeholder="股票 / 基金代码"></label>
+      <label>持有数量<input name="quantity" type="number" min="0" step="any" required></label>
+      <label>成本单价<input name="costPrice" type="number" min="0" step="any" required></label>
+      <label>当前单价
+        <span class="price-row"><input name="currentPrice" type="number" min="0" step="any" required><button class="button" type="button" data-price-fetch>自动获取</button></span>
+      </label>
+      <label>备注<input name="note" maxlength="200"></label>
       <button class="button primary" type="submit">保存修改</button>
     </form>
   </dialog>

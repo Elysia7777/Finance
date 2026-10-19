@@ -6,6 +6,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import bill_parser
@@ -93,6 +94,27 @@ class LocalFinanceTests(unittest.TestCase):
         storage.update_transaction(transaction["id"], {"category": "临时调整"})
         storage.save_settings({"theme": "dark"})
         self.assertEqual(storage.load_transactions("2026-10")[0]["category"], "临时调整")
+
+    def test_transaction_edit_delete_and_search(self):
+        bill = (
+            "交易时间,交易类型,交易对方,商品,收/支,金额(元),当前状态\n"
+            "2026-10-14,商户消费,咖啡店,拿铁,支出,28,支付成功\n"
+            "2026-10-15,商户消费,书店,书,支出,45,支付成功\n"
+        ).encode("utf-8")
+        records = bill_parser.parse_bill(bill, "微信账单.csv")
+        self.assertEqual(storage.save_transactions(records), (2, 0))
+        target = storage.load_transactions(keyword="咖啡店")[0]
+        updated = storage.update_transaction(target["id"], {
+            "amount": 30.5, "merchant": "咖啡店改", "note": "改过", "category": "餐饮",
+        })
+        self.assertEqual(updated["amount"], 30.5)
+        self.assertEqual(updated["merchant"], "咖啡店改")
+        self.assertEqual(updated["category"], "餐饮")
+        self.assertEqual(len(storage.load_transactions(keyword="咖啡店改")), 1)
+        self.assertEqual(len(storage.load_transactions(keyword="书店")), 1)
+        self.assertTrue(storage.delete_transaction(target["id"]))
+        self.assertEqual(len(storage.load_transactions(keyword="咖啡店改")), 0)
+        self.assertEqual(len(storage.load_transactions()), 1)
 
     def test_example_workbook_keeps_distinct_same_amount_rows(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -227,6 +249,33 @@ class LocalFinanceTests(unittest.TestCase):
             )
             with urlopen(delete_request) as response:
                 self.assertEqual(response.status, 200)
+            with urlopen(root + "/api/transactions?q=" + quote("小店")) as response:
+                found = json.loads(response.read().decode("utf-8"))["transactions"]
+                self.assertEqual(len(found), 1)
+                target_id = found[0]["id"]
+            edit_request = Request(
+                root + "/api/transactions/" + target_id,
+                data=json.dumps({
+                    "merchant": "小店改", "amount": 19, "note": "已改",
+                }).encode("utf-8"),
+                method="PUT",
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(edit_request) as response:
+                edited = json.loads(response.read().decode("utf-8"))["transaction"]
+                self.assertEqual(edited["merchant"], "小店改")
+                self.assertEqual(edited["amount"], 19)
+            with urlopen(root + "/api/transactions?q=" + quote("小店改")) as response:
+                self.assertEqual(
+                    len(json.loads(response.read().decode("utf-8"))["transactions"]), 1)
+            transaction_delete = Request(
+                root + "/api/transactions/" + target_id, method="DELETE",
+            )
+            with urlopen(transaction_delete) as response:
+                self.assertEqual(response.status, 200)
+            with urlopen(root + "/api/transactions?q=" + quote("小店改")) as response:
+                self.assertEqual(
+                    json.loads(response.read().decode("utf-8"))["transactions"], [])
             alipay_headers = (
                 b"--finance-boundary\r\n"
                 b'Content-Disposition: form-data; name="file"; filename="alipay.csv"\r\n'

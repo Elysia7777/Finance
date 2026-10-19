@@ -46,11 +46,26 @@
     setTimeout(() => element.remove(), 3600);
   }
 
-  function selectedMonth() { return $('#month-select').value || currentMonth; }
+  function selectedMonth() { return $('#month-select').value || null; }
 
   function transactionsForMonth() {
     const month = selectedMonth();
+    if (!month) return state.transactions;
     return state.transactions.filter(transaction => transaction.date.startsWith(month));
+  }
+
+  function transactionQuery() {
+    const input = $('#transaction-search');
+    return input ? (input.value || '').trim().toLowerCase() : '';
+  }
+
+  function visibleTransactions() {
+    const query = transactionQuery();
+    const rows = transactionsForMonth();
+    if (!query) return rows;
+    return rows.filter(transaction =>
+      [transaction.merchant, transaction.note, transaction.category, transaction.source]
+        .filter(Boolean).join(' ').toLowerCase().includes(query));
   }
 
   function renderProfile() {
@@ -62,6 +77,11 @@
   }
 
   function renderSummary(transactions) {
+    const prefix = selectedMonth() ? '本月' : '累计';
+    $('#summary-net-label').textContent = `${prefix}结余`;
+    $('#summary-income-label').innerHTML = `<i class="dot income-dot"></i>${prefix}收入`;
+    $('#summary-expense-label').innerHTML = `<i class="dot expense-dot"></i>${prefix}支出`;
+    $('#breakdown-eyebrow').textContent = `${prefix}消费`;
     const income = transactions.filter(item => item.direction === 'income');
     const expenses = transactions.filter(item => item.direction === 'expense');
     const incomeTotal = income.reduce((sum, item) => sum + Number(item.amount), 0);
@@ -95,7 +115,12 @@
   }
 
   function renderDailyChart(transactions) {
-    const [year, month] = selectedMonth().split('-').map(Number);
+    const monthValue = selectedMonth();
+    if (!monthValue) {
+      $('#daily-chart').innerHTML = '<p class="empty-note">选择月份后查看每日收支</p>';
+      return;
+    }
+    const [year, month] = monthValue.split('-').map(Number);
     const daysInMonth = new Date(year, month, 0).getDate();
     const daily = new Map();
     transactions.forEach(item => {
@@ -124,7 +149,7 @@
   }
 
   function transactionTable(transactions) {
-    if (!transactions.length) return '<p class="empty-note">这个月还没有流水。导入微信账单后，记录会显示在这里。</p>';
+    if (!transactions.length) return '<p class="empty-note">这个月还没有流水。导入微信 / 支付宝账单后，记录会显示在这里。</p>';
     const rows = transactions.map(transaction => {
       const title = transaction.merchant || transaction.category || '账单记录';
       const secondary = [transaction.note, transaction.source].filter(Boolean).join(' · ');
@@ -134,10 +159,14 @@
         <td><select class="category-select" data-id="${escapeHtml(transaction.id)}" aria-label="修改分类">${categoryOptions(transaction)}</select></td>
         <td class="transaction-source">${escapeHtml(bucketNames[transaction.bucket] || '')}</td>
         <td class="amount ${transaction.direction === 'income' ? 'income' : 'expense'}">${transaction.direction === 'income' ? '+' : '−'}${formatMoney(transaction.amount)}</td>
+        <td class="transaction-actions">
+          <button class="text-button edit-transaction" data-id="${escapeHtml(transaction.id)}" type="button">编辑</button>
+          <button class="text-button danger delete-transaction" data-id="${escapeHtml(transaction.id)}" type="button">删除</button>
+        </td>
       </tr>`;
     }).join('');
     return `<div class="table-scroll"><table class="transaction-table">
-      <thead><tr><th>日期</th><th>交易对象 / 摘要</th><th>分类（可修改）</th><th>开支类型</th><th style="text-align:right">金额</th></tr></thead>
+      <thead><tr><th>日期</th><th>交易对象 / 摘要</th><th>分类（可修改）</th><th>开支类型</th><th style="text-align:right">金额</th><th style="text-align:right">操作</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
   }
 
@@ -145,7 +174,7 @@
     const transactions = transactionsForMonth();
     renderSummary(transactions);
     renderDailyChart(transactions);
-    const sorted = [...transactions].sort((a, b) => b.date.localeCompare(a.date));
+    const sorted = [...visibleTransactions()].sort((a, b) => b.date.localeCompare(a.date));
     $('#recent-transactions').innerHTML = transactionTable(sorted.slice(0, 8));
     $('#all-transactions').innerHTML = transactionTable(sorted);
     $('#month-select-secondary').value = selectedMonth();
@@ -443,6 +472,34 @@
     toast('分类已更新');
   }
 
+  let editingTransactionId = null;
+
+  function openTransactionEditor(transactionId) {
+    const transaction = state.transactions.find(item => item.id === transactionId);
+    if (!transaction) return;
+    editingTransactionId = transactionId;
+    const form = $('#transaction-form');
+    form.elements.date.value = transaction.date;
+    form.elements.amount.value = transaction.amount;
+    form.elements.direction.value = transaction.direction;
+    form.elements.merchant.value = transaction.merchant || '';
+    form.elements.note.value = transaction.note || '';
+    form.elements.category.value = transaction.category || '';
+    $('#transaction-dialog').showModal();
+  }
+
+  async function deleteTransaction(transactionId) {
+    if (!window.confirm('确定删除这笔流水吗？此操作不可恢复。')) return;
+    try {
+      await request(`/transactions/${encodeURIComponent(transactionId)}`, { method: 'DELETE' });
+      state.transactions = state.transactions.filter(item => item.id !== transactionId);
+      renderTransactions();
+      toast('流水已删除');
+    } catch (error) {
+      toast(error.message, true);
+    }
+  }
+
   function showView(view) {
     $$('.view').forEach(section => section.classList.toggle('hidden', section.id !== `view-${view}`));
     $$('.nav-link').forEach(button => button.classList.toggle('active', button.dataset.view === view));
@@ -486,6 +543,41 @@
       $('#month-select').value = event.target.value;
       renderTransactions();
     });
+    $('#transaction-search').addEventListener('input', renderTransactions);
+    document.addEventListener('click', event => {
+      const edit = event.target.closest('.edit-transaction');
+      if (edit) { openTransactionEditor(edit.dataset.id); return; }
+      const remove = event.target.closest('.delete-transaction');
+      if (remove) { deleteTransaction(remove.dataset.id); }
+    });
+    $('#transaction-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!editingTransactionId) return;
+      const form = event.currentTarget;
+      const data = new FormData(form);
+      const body = {
+        date: data.get('date'),
+        amount: Number(data.get('amount')),
+        direction: data.get('direction'),
+        merchant: data.get('merchant'),
+        note: data.get('note'),
+        category: data.get('category'),
+      };
+      try {
+        const result = await request(`/transactions/${encodeURIComponent(editingTransactionId)}`, {
+          method: 'PUT', body,
+        });
+        const index = state.transactions.findIndex(item => item.id === editingTransactionId);
+        if (index >= 0) state.transactions[index] = result.transaction;
+        renderTransactions();
+        $('#transaction-dialog').close();
+        toast('流水已更新');
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+    $$('#transaction-dialog [data-dialog-close]').forEach(button =>
+      button.addEventListener('click', () => $('#transaction-dialog').close()));
     $('#bill-file').addEventListener('change', event => uploadFile(event.target.files[0]));
     const dropzone = $('#dropzone');
     ['dragenter', 'dragover'].forEach(name => dropzone.addEventListener(name, event => {

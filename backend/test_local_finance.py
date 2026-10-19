@@ -140,10 +140,17 @@ class LocalFinanceTests(unittest.TestCase):
         self.assertEqual(settings["largeThreshold"], 800)
         item = storage.save_item({
             "name": "指数基金", "type": "fund", "quantity": 2,
-            "costPrice": 10, "currentPrice": 12,
+            "costPrice": 10, "currentPrice": 12, "code": "110022",
         })
         self.assertEqual(item["value"], 24)
         self.assertEqual(storage.load_items()[0]["id"], item["id"])
+        updated = storage.update_item(item["id"], {
+            "name": "指数基金改", "type": "fund", "code": "110022",
+            "quantity": 3, "costPrice": 10, "currentPrice": 13, "note": "已改",
+        })
+        self.assertEqual(updated["name"], "指数基金改")
+        self.assertEqual(updated["code"], "110022")
+        self.assertEqual(updated["value"], 39)
 
     def test_qa_uses_llm_when_configured(self):
         llm_httpd = ThreadingHTTPServer(("127.0.0.1", 0), _MockLLMHandler)

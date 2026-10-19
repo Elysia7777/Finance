@@ -40,13 +40,13 @@ def _num(value):
         return None
 
 
-def _http(url, referer=None):
+def _http(url, referer=None, encoding="gb18030"):
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     if referer:
         request.add_header("Referer", referer)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open(request, timeout=TIMEOUT) as response:
-        return response.read().decode("gb18030", "replace")
+        return response.read().decode(encoding, "replace")
 
 
 def _fetch_stocks():
@@ -98,6 +98,71 @@ def _fetch_metals():
     if values.get("gds_PT9995") is not None:
         result["PT"] = {"price": values["gds_PT9995"], "unit": "元/克"}
     return result
+
+
+def _stock_symbol(code):
+    code = (code or "").strip()
+    lower = code.lower()
+    if lower.startswith(("sh", "sz", "hk", "us")):
+        return lower
+    if code.isdigit():
+        if code.startswith(("6", "5", "9")):
+            return "sh" + code
+        return "sz" + code
+    return "us" + lower
+
+
+def lookup_stock(code):
+    try:
+        symbol = _stock_symbol(code)
+        text = _http(TENCENT_URL + symbol)
+        match = re.search(r'v_[A-Za-z0-9]+="([^"]*)"', text)
+        if not match:
+            raise ValueError("未找到该股票行情")
+        parts = match.group(1).split("~")
+        if len(parts) <= 32:
+            raise ValueError("股票行情格式异常")
+        price = _num(parts[3])
+        if price is None:
+            raise ValueError("未找到该股票价格")
+        return {
+            "code": code,
+            "name": parts[1],
+            "price": price,
+            "changePct": _num(parts[32]),
+            "source": "腾讯行情",
+            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("行情获取失败：%s" % exc) from exc
+
+
+def lookup_fund(code):
+    code = (code or "").strip()
+    try:
+        url = ("http://api.fund.eastmoney.com/f10/lsjz"
+               "?fundCode=%s&pageIndex=1&pageSize=1" % code)
+        text = _http(url, referer="http://fundf10.eastmoney.com/", encoding="utf-8")
+        data = json.loads(text)
+        rows = (data.get("Data") or {}).get("LSJZList") or []
+        if not rows:
+            raise ValueError("未找到该基金净值")
+        nav = _num(rows[0].get("DWJZ"))
+        if nav is None:
+            raise ValueError("基金净值格式异常")
+        return {
+            "code": code,
+            "name": "",
+            "price": nav,
+            "source": "天天基金·单位净值",
+            "time": str(rows[0].get("FSRQ") or ""),
+        }
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("基金净值获取失败：%s" % exc) from exc
 
 
 def _build_panels():

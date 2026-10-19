@@ -239,7 +239,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"items": storage.load_items()})
             if method == "POST":
                 return self._send(201, {"item": storage.save_item(self._json_body())})
+        if path == "/api/quote" and method == "GET":
+            kind = (query.get("type") or [""])[0].strip().lower()
+            code = (query.get("code") or [""])[0].strip()
+            if not code or len(code) > 20:
+                raise ValueError("请提供有效的代码")
+            if kind == "stock":
+                return self._send(200, market.lookup_stock(code))
+            if kind == "fund":
+                return self._send(200, market.lookup_fund(code))
+            if kind == "cash":
+                return self._send(200, {
+                    "code": code, "price": 1, "source": "现金", "time": "",
+                })
+            raise ValueError("仅支持股票 / 基金 / 现金类型自动获取价格")
         match = re.fullmatch(r"/api/items/([a-fA-F0-9]+)", path)
+        if match and method == "PUT":
+            item = storage.update_item(match.group(1), self._json_body())
+            if item is None:
+                return self._send(404, {"error": "找不到这项资产"})
+            return self._send(200, {"item": item})
         if match and method == "DELETE":
             if not storage.delete_item(match.group(1)):
                 return self._send(404, {"error": "找不到这项资产"})

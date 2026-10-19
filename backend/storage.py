@@ -21,8 +21,16 @@ DEFAULT_PROFILE = {"displayName": "我的空间", "avatar": "🌱"}
 DEFAULT_SETTINGS = {
     "theme": "light",
     "largeThreshold": 1000,
+    "monthlyBudget": None,
     "rules": [],
     "platforms": {"wechat": True, "alipay": False, "unionpay": False},
+}
+DEFAULT_LLM_CONFIG = {
+    "enabled": False,
+    "apiKey": "",
+    "baseUrl": "https://api.openai.com/v1",
+    "model": "gpt-4o-mini",
+    "timeout": 20,
 }
 _DAILY_CATEGORIES = (
     ("餐饮", ("餐", "咖啡", "奶茶", "食品", "外卖", "食堂", "超市")),
@@ -84,6 +92,25 @@ def init_db():
                 note TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'local',
+                model TEXT NOT NULL DEFAULT '',
+                evidence TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS messages_conversation_idx
+                ON messages(conversation_id, created_at);
             CREATE TABLE IF NOT EXISTS app_data (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -147,6 +174,18 @@ def save_settings(changes):
         if changes["theme"] not in ("light", "dark", "lavender", "mint"):
             raise ValueError("不支持的主题")
         settings["theme"] = changes["theme"]
+    if "monthlyBudget" in changes:
+        value = changes["monthlyBudget"]
+        if value in (None, ""):
+            settings["monthlyBudget"] = None
+        else:
+            try:
+                budget = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("每月预算必须是数字") from exc
+            if not 0 < budget <= 100000000:
+                raise ValueError("每月预算需大于 0")
+            settings["monthlyBudget"] = round(budget, 2)
     if "largeThreshold" in changes:
         try:
             threshold = float(changes["largeThreshold"])
@@ -192,6 +231,168 @@ def save_settings(changes):
     if "rules" in changes or "largeThreshold" in changes:
         _reclassify_all(settings)
     return settings
+
+
+def get_llm_config():
+    config = dict(DEFAULT_LLM_CONFIG)
+    stored = _get_json("llm_config", {})
+    for key in DEFAULT_LLM_CONFIG:
+        if key in stored:
+            config[key] = stored[key]
+    return config
+
+
+def get_llm_public_config():
+    config = get_llm_config()
+    return {
+        "enabled": bool(config["enabled"]),
+        "hasApiKey": bool(str(config.get("apiKey") or "").strip()),
+        "baseUrl": str(config["baseUrl"]),
+        "model": str(config["model"]),
+        "timeout": config["timeout"],
+    }
+
+
+def save_llm_config(changes):
+    changes = changes or {}
+    config = get_llm_config()
+    if "enabled" in changes:
+        config["enabled"] = bool(changes["enabled"])
+    if changes.get("clearApiKey"):
+        config["apiKey"] = ""
+    if str(changes.get("apiKey") or "").strip():
+        config["apiKey"] = str(changes["apiKey"]).strip()
+    if "baseUrl" in changes:
+        base_url = str(changes.get("baseUrl") or "").strip()
+        if base_url and not base_url.lower().startswith(("http://", "https://")):
+            raise ValueError("接口地址需以 http:// 或 https:// 开头")
+        config["baseUrl"] = base_url
+    if "model" in changes:
+        model = str(changes.get("model") or "").strip()
+        if not model or len(model) > 100:
+            raise ValueError("模型名称需为 1-100 个字符")
+        config["model"] = model
+    if "timeout" in changes:
+        try:
+            timeout = float(changes["timeout"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("超时时间必须是数字") from exc
+        if not 1 <= timeout <= 300:
+            raise ValueError("超时时间需在 1-300 秒之间")
+        config["timeout"] = int(timeout)
+    _set_json("llm_config", config)
+    return config
+
+
+def _conversation_dict(row, message_count):
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+        "messageCount": message_count,
+    }
+
+
+def create_conversation():
+    init_db()
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conversation_id = uuid.uuid4().hex
+    with _connect() as connection:
+        connection.execute(
+            "INSERT INTO conversations(id, title, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (conversation_id, "新对话", now, now),
+        )
+    return _conversation_dict(
+        {"id": conversation_id, "title": "新对话",
+         "created_at": now, "updated_at": now}, 0)
+
+
+def list_conversations():
+    init_db()
+    with _connect() as connection:
+        rows = connection.execute(
+            "SELECT c.*, COUNT(m.id) AS message_count "
+            "FROM conversations c LEFT JOIN messages m ON m.conversation_id = c.id "
+            "GROUP BY c.id ORDER BY c.updated_at DESC, c.created_at DESC"
+        ).fetchall()
+    return [_conversation_dict(row, row["message_count"]) for row in rows]
+
+
+def get_conversation_messages(conversation_id):
+    init_db()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT c.*, COUNT(m.id) AS message_count "
+            "FROM conversations c LEFT JOIN messages m ON m.conversation_id = c.id "
+            "WHERE c.id = ? GROUP BY c.id",
+            (conversation_id,),
+        ).fetchone()
+        if not row:
+            return None
+        message_rows = connection.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? "
+            "ORDER BY created_at ASC, rowid ASC",
+            (conversation_id,),
+        ).fetchall()
+    messages = [{
+        "id": message["id"],
+        "role": message["role"],
+        "content": message["content"],
+        "source": message["source"],
+        "model": message["model"],
+        "evidence": json.loads(message["evidence"] or "[]"),
+        "createdAt": message["created_at"],
+    } for message in message_rows]
+    return {"conversation": _conversation_dict(row, row["message_count"]), "messages": messages}
+
+
+def add_message(conversation_id, role, content, source="local", model="", evidence=None):
+    init_db()
+    now = datetime.now(timezone.utc).isoformat()
+    message_id = uuid.uuid4().hex
+    with _connect() as connection:
+        exists = connection.execute(
+            "SELECT id FROM conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()
+        if not exists:
+            return None
+        connection.execute(
+            "INSERT INTO messages"
+            "(id, conversation_id, role, content, source, model, evidence, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (message_id, conversation_id, role, content, source, model,
+             json.dumps(evidence or [], ensure_ascii=False), now),
+        )
+        connection.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (now, conversation_id),
+        )
+        if role == "user":
+            title = content if len(content) <= 24 else content[:24] + "…"
+            connection.execute(
+                "UPDATE conversations SET title = ? WHERE id = ? AND title = '新对话'",
+                (title, conversation_id),
+            )
+    return {
+        "id": message_id,
+        "role": role,
+        "content": content,
+        "source": source,
+        "model": model,
+        "evidence": evidence or [],
+        "createdAt": now,
+    }
+
+
+def delete_conversation(conversation_id):
+    init_db()
+    with _connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM conversations WHERE id = ?", (conversation_id,)
+        )
+    return cursor.rowcount > 0
 
 
 def _classify(record, settings):

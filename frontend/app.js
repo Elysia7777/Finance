@@ -457,7 +457,8 @@
     const form = new FormData();
     form.append('file', file);
     try {
-      const result = await request('/bills/wechat', { method: 'POST', body: form });
+      const platform = detectPlatform(file.name);
+      const result = await request(`/bills/${platform}`, { method: 'POST', body: form });
       await reloadTransactions();
       feedback.textContent = `已处理 ${result.parsed} 笔：新增 ${result.imported} 笔，跳过重复 ${result.duplicates} 笔。`;
       toast(`账单已导入，新增 ${result.imported} 笔`);
@@ -468,6 +469,13 @@
     } finally {
       $('#bill-file').value = '';
     }
+  }
+
+  function detectPlatform(filename) {
+    const lower = String(filename || '').toLowerCase();
+    if (lower.includes('支付宝') || lower.includes('alipay')) return 'alipay';
+    if (lower.includes('银联') || lower.includes('unionpay') || lower.includes('云闪付')) return 'unionpay';
+    return 'wechat';
   }
 
   function bindEvents() {

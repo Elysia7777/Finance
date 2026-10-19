@@ -12,6 +12,7 @@ backend/db.json
 *.log
 .DS_Store
 Thumbs.db
+~$*
 
 # 环境变量
 .env

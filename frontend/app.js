@@ -4,7 +4,7 @@
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const money = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' });
-  const bucketNames = { daily: '日常开支', monthly: '月度开支', large: '大型开支', income: '收入' };
+  const bucketNames = { daily: '日常开支', monthly: '月度开支', large: '大型开支', income: '收入', neutral: '不计收支' };
   const categoryChoices = ['日常开支', '月度开支', '大型开支', '餐饮', '交通', '购物', '医疗', '娱乐', '收入'];
   const state = {
     profile: {}, settings: {}, transactions: [], items: [], panels: {},
@@ -59,13 +59,25 @@
     return input ? (input.value || '').trim().toLowerCase() : '';
   }
 
+  function amountRange() {
+    const minElement = $('#amount-min');
+    const maxElement = $('#amount-max');
+    const parse = value => (value === '' || value === null || value === undefined) ? null : Number(value);
+    return { min: parse(minElement.value), max: parse(maxElement.value) };
+  }
+
   function visibleTransactions() {
     const query = transactionQuery();
-    const rows = transactionsForMonth();
-    if (!query) return rows;
-    return rows.filter(transaction =>
-      [transaction.merchant, transaction.note, transaction.category, transaction.source]
-        .filter(Boolean).join(' ').toLowerCase().includes(query));
+    const { min, max } = amountRange();
+    let rows = transactionsForMonth();
+    if (query) {
+      rows = rows.filter(transaction =>
+        [transaction.merchant, transaction.note, transaction.category, transaction.source]
+          .filter(Boolean).join(' ').toLowerCase().includes(query));
+    }
+    if (min !== null) rows = rows.filter(transaction => Number(transaction.amount) >= min);
+    if (max !== null) rows = rows.filter(transaction => Number(transaction.amount) <= max);
+    return rows;
   }
 
   function renderProfile() {
@@ -153,12 +165,16 @@
     const rows = transactions.map(transaction => {
       const title = transaction.merchant || transaction.category || '账单记录';
       const secondary = [transaction.note, transaction.source].filter(Boolean).join(' · ');
+      const directionClass = transaction.direction === 'income'
+        ? 'income' : transaction.direction === 'neutral' ? 'neutral' : 'expense';
+      const sign = transaction.direction === 'income'
+        ? '+' : transaction.direction === 'neutral' ? '±' : '−';
       return `<tr>
         <td class="transaction-date">${escapeHtml(transaction.date)}</td>
         <td><div class="transaction-merchant" title="${escapeHtml(title)}">${escapeHtml(title)}</div><div class="transaction-note">${escapeHtml(secondary)}</div></td>
         <td><select class="category-select" data-id="${escapeHtml(transaction.id)}" aria-label="修改分类">${categoryOptions(transaction)}</select></td>
         <td class="transaction-source">${escapeHtml(bucketNames[transaction.bucket] || '')}</td>
-        <td class="amount ${transaction.direction === 'income' ? 'income' : 'expense'}">${transaction.direction === 'income' ? '+' : '−'}${formatMoney(transaction.amount)}</td>
+        <td class="amount ${directionClass}">${sign}${formatMoney(transaction.amount)}</td>
         <td class="transaction-actions">
           <button class="text-button edit-transaction" data-id="${escapeHtml(transaction.id)}" type="button">编辑</button>
           <button class="text-button danger delete-transaction" data-id="${escapeHtml(transaction.id)}" type="button">删除</button>
@@ -544,6 +560,8 @@
       renderTransactions();
     });
     $('#transaction-search').addEventListener('input', renderTransactions);
+    $('#amount-min').addEventListener('input', renderTransactions);
+    $('#amount-max').addEventListener('input', renderTransactions);
     document.addEventListener('click', event => {
       const edit = event.target.closest('.edit-transaction');
       if (edit) { openTransactionEditor(edit.dataset.id); return; }

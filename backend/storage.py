@@ -399,6 +399,8 @@ def _classify(record, settings):
     text = " ".join((record.get("merchant", ""), record.get("note", ""),
                      record.get("category", ""), record.get("raw", "")))
     amount = round(float(record["amount"]), 2)
+    if record["direction"] == "neutral":
+        return "不计收支", "neutral"
     if record["direction"] == "income":
         return "收入", "income"
     for rule in settings.get("rules", []):

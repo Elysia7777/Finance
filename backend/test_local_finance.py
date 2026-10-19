@@ -64,17 +64,19 @@ class LocalFinanceTests(unittest.TestCase):
         self.assertEqual(records[1]["direction"], "income")
         self.assertEqual(records[1]["date"], "2026-10-14")
 
-    def test_parse_alipay_csv_skips_neutral_and_pending(self):
+    def test_parse_alipay_csv_keeps_neutral_and_skips_pending(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         filename = os.path.join(root, "案例账单-支付宝.csv")
         with open(filename, "rb") as sample:
             records = bill_parser.parse_bill(sample.read(), os.path.basename(filename))
-        self.assertEqual(len(records), 2)
+        self.assertEqual(len(records), 3)
         self.assertEqual(records[0]["direction"], "expense")
         self.assertEqual(records[0]["amount"], 25.5)
         self.assertEqual(records[0]["source"], "支付宝")
         self.assertEqual(records[1]["direction"], "income")
         self.assertEqual(records[1]["amount"], 6.0)
+        self.assertEqual(records[2]["direction"], "neutral")
+        self.assertEqual(records[2]["amount"], 100.0)
 
     def test_import_deduplicates_and_rules_reclassify(self):
         bill = (
@@ -118,7 +120,11 @@ class LocalFinanceTests(unittest.TestCase):
 
     def test_example_workbook_keeps_distinct_same_amount_rows(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        filename = glob.glob(os.path.join(root, "*.xlsx"))[0]
+        candidates = [
+            path for path in glob.glob(os.path.join(root, "*.xlsx"))
+            if not os.path.basename(path).startswith("~$")
+        ]
+        filename = candidates[0]
         with open(filename, "rb") as sample:
             records = bill_parser.parse_bill(sample.read(), os.path.basename(filename))
         additions, duplicates = dedup(records)

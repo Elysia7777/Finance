@@ -18,12 +18,12 @@ import storage
 HOST = os.environ.get("PFA_HOST", "127.0.0.1")
 PORT = int(os.environ.get("PFA_PORT", "8000"))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PANELS_FILE = os.path.join(BASE_DIR, "panels.json")
 CLIENT_DIR = os.path.normpath(os.path.join(BASE_DIR, "..", "frontend"))
 AI_DOCS_DIR = os.path.normpath(os.path.join(BASE_DIR, "..", "ai_docs"))
 if AI_DOCS_DIR not in sys.path:
     sys.path.insert(0, AI_DOCS_DIR)
 import llm_client  # noqa: E402
+import market  # noqa: E402
 MAX_BODY = 20 * 1024 * 1024
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -121,8 +121,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health" and method == "GET":
             return self._send(200, {"ok": True, "name": "finance-local", "version": "1.0.0"})
         if path == "/api/panels" and method == "GET":
-            with open(PANELS_FILE, "r", encoding="utf-8") as file:
-                return self._send(200, json.load(file))
+            return self._send(200, market.get_panels())
         if path == "/api/profile":
             if method == "GET":
                 return self._send(200, {"profile": storage.get_profile()})

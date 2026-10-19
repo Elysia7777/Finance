@@ -14,6 +14,7 @@ from dedup import dedup
 import server
 import storage
 import llm_client
+import market
 
 
 class _MockLLMHandler(BaseHTTPRequestHandler):
@@ -179,6 +180,25 @@ class LocalFinanceTests(unittest.TestCase):
             llm_httpd.shutdown()
             llm_httpd.server_close()
             thread.join()
+
+    def test_market_panels_fallback_structure(self):
+        original = (market._fetch_stocks, market._fetch_fx, market._fetch_metals)
+
+        def fail():
+            raise RuntimeError("offline")
+
+        market._fetch_stocks = fail
+        market._fetch_fx = fail
+        market._fetch_metals = fail
+        try:
+            panels = market._build_panels()
+        finally:
+            market._fetch_stocks, market._fetch_fx, market._fetch_metals = original
+        for section in ("stocks", "currencies", "metals"):
+            self.assertIn(section, panels)
+            for row in panels[section]["rows"]:
+                self.assertIn("source", row)
+        self.assertIn("updatedAt", panels)
 
     def test_local_http_api_uploads_without_authentication(self):
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)

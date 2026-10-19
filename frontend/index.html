@@ -50,17 +50,17 @@
 
         <div class="summary-grid">
           <article class="summary-card balance-card">
-            <span class="summary-label">本月结余</span>
+            <span class="summary-label" id="summary-net-label">本月结余</span>
             <strong id="summary-net">¥0.00</strong>
             <span class="summary-foot">收入减去支出</span>
           </article>
           <article class="summary-card">
-            <span class="summary-label"><i class="dot income-dot"></i>本月收入</span>
+            <span class="summary-label" id="summary-income-label"><i class="dot income-dot"></i>本月收入</span>
             <strong id="summary-income">¥0.00</strong>
             <span class="summary-foot">共 <b id="income-count">0</b> 笔</span>
           </article>
           <article class="summary-card">
-            <span class="summary-label"><i class="dot expense-dot"></i>本月支出</span>
+            <span class="summary-label" id="summary-expense-label"><i class="dot expense-dot"></i>本月支出</span>
             <strong id="summary-expense">¥0.00</strong>
             <span class="summary-foot">共 <b id="expense-count">0</b> 笔</span>
           </article>
@@ -87,7 +87,7 @@
           </section>
           <section class="card breakdown-card">
             <div class="section-title">
-              <div><p class="eyebrow">本月消费</p><h2>支出构成</h2></div>
+            <div><p class="eyebrow" id="breakdown-eyebrow">本月消费</p><h2>支出构成</h2></div>
               <button class="text-button" data-go="rules">管理规则 ↗</button>
             </div>
             <div id="breakdown" class="breakdown-list"></div>
@@ -114,7 +114,13 @@
       <section class="view hidden" id="view-transactions">
         <div class="page-heading">
           <div><p class="eyebrow">你的每一笔</p><h1>流水</h1><p class="subhead">点选分类即可手动调整，规则会用于新导入的账单。</p></div>
-          <label class="month-picker">月份<input type="month" id="month-select-secondary"></label>
+          <div class="transaction-tools">
+            <label class="month-picker">月份<input type="month" id="month-select-secondary"></label>
+            <input class="transaction-search" id="transaction-search" type="search" placeholder="搜索商户 / 备注 / 分类" autocomplete="off">
+            <input class="transaction-search amount-filter" id="amount-min" type="number" min="0" step="0.01" placeholder="金额从">
+            <span class="muted">–</span>
+            <input class="transaction-search amount-filter" id="amount-max" type="number" min="0" step="0.01" placeholder="金额到">
+          </div>
         </div>
         <section class="card ledger-card"><div id="all-transactions"></div></section>
       </section>
@@ -234,6 +240,19 @@
       <footer class="page-footer">本机单用户 · 不需要账号 · 不上传至云端</footer>
     </main>
   </div>
+
+  <dialog id="transaction-dialog" class="dialog">
+    <form id="transaction-form">
+      <div class="dialog-head"><div><p class="eyebrow">编辑流水</p><h2>修改记录</h2></div><button type="button" class="icon-button" data-dialog-close aria-label="关闭">×</button></div>
+      <label>日期<input name="date" type="date" required></label>
+      <label>金额<input name="amount" type="number" min="0.01" step="0.01" required></label>
+      <label>收支<select name="direction"><option value="expense">支出</option><option value="income">收入</option></select></label>
+      <label>交易对象<input name="merchant" type="text" maxlength="200"></label>
+      <label>备注<input name="note" type="text" maxlength="500"></label>
+      <label>分类<input name="category" type="text" maxlength="40" required></label>
+      <button class="button primary" type="submit">保存修改</button>
+    </form>
+  </dialog>
 
   <dialog id="profile-dialog" class="dialog">
     <form id="profile-form">

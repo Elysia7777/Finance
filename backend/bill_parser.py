@@ -196,10 +196,11 @@ def parse_bill(file_bytes, filename, source=None):
             continue
         flow = _get(row, mapping, "flow")
         if "不计收支" in flow:
-            continue
-        if not flow:
-            flow = "收入" if any(word in status for word in ("退款", "收款")) else "支出"
-        direction = "income" if any(word in flow for word in ("收入", "收款", "退款")) else "expense"
+            direction = "neutral"
+        elif flow:
+            direction = "income" if any(word in flow for word in ("收入", "收款", "退款")) else "expense"
+        else:
+            direction = "income" if any(word in status for word in ("退款", "收款")) else "expense"
         category_name = _get(row, mapping, "category")
         merchant = _get(row, mapping, "merchant")
         product = _get(row, mapping, "product")

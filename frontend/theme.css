@@ -207,6 +207,18 @@ h3 { font-size: 15px; }
   color: var(--text);
   box-shadow: var(--shadow-small);
 }
+.transaction-tools { display: flex; align-items: center; gap: 10px; }
+.transaction-search {
+  width: 210px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-small);
+  font-size: 12px;
+}
+.transaction-search.amount-filter { width: 110px; }
 
 .summary-grid { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 14px; margin-bottom: 16px; }
 .summary-card {
@@ -295,6 +307,7 @@ h3 { font-size: 15px; }
   font-size: 11px;
   white-space: nowrap;
 }
+.text-button.danger { color: var(--danger); }
 .breakdown-list { display: flex; flex-direction: column; gap: 16px; }
 .breakdown-row { display: grid; grid-template-columns: minmax(76px, .7fr) 2fr auto; align-items: center; gap: 12px; font-size: 11px; }
 .breakdown-label { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
@@ -342,7 +355,9 @@ h3 { font-size: 15px; }
 .amount { text-align: right; font-variant-numeric: tabular-nums; font-weight: 620; white-space: nowrap; }
 .amount.income { color: var(--income); }
 .amount.expense { color: var(--text); }
+.amount.neutral { color: var(--muted); }
 .transaction-source { color: var(--muted); font-size: 10px; }
+.transaction-actions { display: flex; gap: 10px; justify-content: flex-end; white-space: nowrap; }
 
 .page-heading { align-items: center; margin-bottom: 24px; }
 .page-heading h1 { margin-bottom: 8px; }

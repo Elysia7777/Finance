@@ -137,7 +137,12 @@ class Handler(BaseHTTPRequestHandler):
             month = (query.get("month") or [None])[0]
             if month and not re.fullmatch(r"\d{4}-\d{2}", month):
                 raise ValueError("月份格式应为 YYYY-MM")
-            return self._send(200, {"transactions": storage.load_transactions(month)})
+            keyword = (query.get("q") or [""])[0].strip()
+            if len(keyword) > 100:
+                raise ValueError("搜索关键词不能超过 100 个字符")
+            return self._send(200, {
+                "transactions": storage.load_transactions(month, keyword or None)
+            })
         if path == "/api/llm/config":
             if method == "GET":
                 return self._send(200, storage.get_llm_public_config())
@@ -212,6 +217,10 @@ class Handler(BaseHTTPRequestHandler):
             if transaction is None:
                 return self._send(404, {"error": "找不到这笔流水"})
             return self._send(200, {"transaction": transaction})
+        if match and method == "DELETE":
+            if not storage.delete_transaction(match.group(1)):
+                return self._send(404, {"error": "找不到这笔流水"})
+            return self._send(200, {"ok": True})
         bill_route = re.fullmatch(r"/api/bills/(wechat|alipay|unionpay)", path)
         if (path == "/api/bills" or bill_route) and method == "POST":
             platform = bill_route.group(1) if bill_route else "wechat"

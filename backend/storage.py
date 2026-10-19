@@ -8,7 +8,7 @@ import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from threading import Lock
 
 from dedup import dedup
@@ -399,6 +399,8 @@ def _classify(record, settings):
     text = " ".join((record.get("merchant", ""), record.get("note", ""),
                      record.get("category", ""), record.get("raw", "")))
     amount = round(float(record["amount"]), 2)
+    if record["direction"] == "neutral":
+        return "不计收支", "neutral"
     if record["direction"] == "income":
         return "收入", "income"
     for rule in settings.get("rules", []):
@@ -464,31 +466,96 @@ def save_transactions(records):
     return len(additions), len(duplicates)
 
 
-def load_transactions(month=None):
+def load_transactions(month=None, keyword=None):
     init_db()
     query = "SELECT * FROM transactions"
-    args = ()
+    clauses = []
+    args = []
     if month:
-        query += " WHERE date LIKE ?"
-        args = (str(month) + "%",)
+        clauses.append("date LIKE ?")
+        args.append(str(month) + "%")
+    if keyword:
+        clauses.append(
+            "(merchant LIKE ? OR note LIKE ? OR category LIKE ? OR source LIKE ?)"
+        )
+        like = "%" + str(keyword) + "%"
+        args.extend((like, like, like, like))
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
     query += " ORDER BY date DESC, created_at DESC"
     with _connect() as connection:
         return [_record_from_row(row) for row in connection.execute(query, args).fetchall()]
 
 
 def update_transaction(transaction_id, changes):
-    category = str(changes.get("category") or "").strip()
-    if not category or len(category) > 40:
-        raise ValueError("分类需为 1-40 个字符")
+    changes = changes or {}
+    updates = {}
+    if "category" in changes:
+        category = str(changes.get("category") or "").strip()
+        if not category or len(category) > 40:
+            raise ValueError("分类需为 1-40 个字符")
+        updates["category"] = category
+        updates["category_overridden"] = 1
+    if "amount" in changes:
+        try:
+            amount = float(changes.get("amount"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("金额必须是数字") from exc
+        if not math.isfinite(amount) or amount <= 0 or amount > 100000000:
+            raise ValueError("金额需为大于 0 的有效数字")
+        updates["amount"] = round(amount, 2)
+    if "date" in changes:
+        text = str(changes.get("date") or "").strip()
+        try:
+            updates["date"] = date.fromisoformat(text).isoformat()
+        except ValueError as exc:
+            raise ValueError("日期需为 YYYY-MM-DD 格式") from exc
+    if "direction" in changes:
+        direction = str(changes.get("direction") or "").strip()
+        if direction not in ("income", "expense"):
+            raise ValueError("收支类型无效")
+        updates["direction"] = direction
+    if "merchant" in changes:
+        merchant = str(changes.get("merchant") or "").strip()
+        if len(merchant) > 200:
+            raise ValueError("交易对象需在 200 字以内")
+        updates["merchant"] = merchant
+    if "note" in changes:
+        note = str(changes.get("note") or "").strip()
+        if len(note) > 500:
+            raise ValueError("备注需在 500 字以内")
+        updates["note"] = note
+
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM transactions WHERE id = ?", (transaction_id,)
+        ).fetchone()
+        if not row:
+            return None
+        if "direction" in updates:
+            if updates["direction"] == "income":
+                updates["bucket"] = "income"
+            elif updates["direction"] == "expense" and row["bucket"] == "income":
+                updates["bucket"] = "daily"
+        if not updates:
+            raise ValueError("没有可更新的字段")
+        set_clause = ", ".join("%s = ?" % key for key in updates)
+        connection.execute(
+            "UPDATE transactions SET %s WHERE id = ?" % set_clause,
+            list(updates.values()) + [transaction_id],
+        )
+        row = connection.execute(
+            "SELECT * FROM transactions WHERE id = ?", (transaction_id,)
+        ).fetchone()
+    return _record_from_row(row)
+
+
+def delete_transaction(transaction_id):
     with _connect() as connection:
         cursor = connection.execute(
-            "UPDATE transactions SET category = ?, category_overridden = 1 WHERE id = ?",
-            (category, transaction_id),
+            "DELETE FROM transactions WHERE id = ?", (transaction_id,)
         )
-        if cursor.rowcount == 0:
-            return None
-        row = connection.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id,)).fetchone()
-    return _record_from_row(row)
+    return cursor.rowcount > 0
 
 
 def load_items():

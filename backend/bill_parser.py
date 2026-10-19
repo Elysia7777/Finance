@@ -115,7 +115,7 @@ def _find_header(rows):
         if "date" in mapping and "amount" in mapping:
             optional = {
                 "flow": ("收/支", "收支", "收支类型", "资金流向"),
-                "category": ("交易类型", "类型", "业务类型"),
+                "category": ("交易类型", "交易分类", "类型", "业务类型"),
                 "merchant": ("交易对方", "对方名称", "商户名称", "商家名称"),
                 "product": ("商品", "商品名称", "商品说明", "摘要"),
                 "status": ("当前状态", "交易状态", "状态"),
@@ -171,17 +171,18 @@ def _amount(value):
     return abs(number)
 
 
-def parse_bill(file_bytes, filename):
+def parse_bill(file_bytes, filename, source=None):
     """Return normalized transaction records from a supported export."""
     rows = _read_rows(file_bytes, filename)
     header_index, mapping = _find_header(rows)
-    source = "微信" if "微信" in filename else "支付宝" if "支付宝" in filename else "导入账单"
+    if source is None:
+        source = "微信" if "微信" in filename else "支付宝" if "支付宝" in filename else "导入账单"
     records = []
     for line_number, row in enumerate(rows[header_index + 1:], header_index + 2):
         if not row or not any(str(value).strip() for value in row):
             continue
         status = _get(row, mapping, "status")
-        if any(word in status for word in ("关闭", "失败", "待付款", "交易关闭")):
+        if any(word in status for word in ("关闭", "失败", "待付款", "交易关闭", "待领取")):
             continue
         raw_amount = _get(row, mapping, "amount")
         if not raw_amount:
@@ -194,6 +195,8 @@ def parse_bill(file_bytes, filename):
         if amount == 0:
             continue
         flow = _get(row, mapping, "flow")
+        if "不计收支" in flow:
+            continue
         if not flow:
             flow = "收入" if any(word in status for word in ("退款", "收款")) else "支出"
         direction = "income" if any(word in flow for word in ("收入", "收款", "退款")) else "expense"

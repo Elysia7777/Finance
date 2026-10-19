@@ -63,6 +63,18 @@ class LocalFinanceTests(unittest.TestCase):
         self.assertEqual(records[1]["direction"], "income")
         self.assertEqual(records[1]["date"], "2026-10-14")
 
+    def test_parse_alipay_csv_skips_neutral_and_pending(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        filename = os.path.join(root, "案例账单-支付宝.csv")
+        with open(filename, "rb") as sample:
+            records = bill_parser.parse_bill(sample.read(), os.path.basename(filename))
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0]["direction"], "expense")
+        self.assertEqual(records[0]["amount"], 25.5)
+        self.assertEqual(records[0]["source"], "支付宝")
+        self.assertEqual(records[1]["direction"], "income")
+        self.assertEqual(records[1]["amount"], 6.0)
+
     def test_import_deduplicates_and_rules_reclassify(self):
         bill = (
             "交易时间,交易类型,交易对方,商品,收/支,金额(元),当前状态\n"
@@ -215,6 +227,25 @@ class LocalFinanceTests(unittest.TestCase):
             )
             with urlopen(delete_request) as response:
                 self.assertEqual(response.status, 200)
+            alipay_headers = (
+                b"--finance-boundary\r\n"
+                b'Content-Disposition: form-data; name="file"; filename="alipay.csv"\r\n'
+                b"Content-Type: text/csv\r\n\r\n"
+            )
+            alipay_content = (
+                "交易时间,交易分类,交易对方,商品说明,收/支,金额,交易状态\n"
+                "2026-10-14 12:30:00,餐饮美食,测试餐厅,午餐,支出,25.50,交易成功\n"
+                "2026-10-14 13:00:00,退款,测试商户,订单退款,收入,6.00,退款成功\n"
+            ).encode("utf-8")
+            alipay_body = alipay_headers + alipay_content + b"\r\n--finance-boundary--\r\n"
+            alipay_request = Request(
+                root + "/api/bills/alipay", data=alipay_body, method="POST",
+                headers={"Content-Type": "multipart/form-data; boundary=finance-boundary"},
+            )
+            with urlopen(alipay_request) as response:
+                result = response.read().decode("utf-8")
+                self.assertEqual(response.status, 201)
+                self.assertIn('"imported": 2', result)
             llm_save = Request(
                 root + "/api/llm/config",
                 data=json.dumps({
@@ -237,7 +268,7 @@ class LocalFinanceTests(unittest.TestCase):
                 urlopen(root + "/api/login")
             self.assertEqual(error.exception.code, 404)
             with self.assertRaises(HTTPError) as error:
-                urlopen(Request(root + "/api/bills/alipay", data=b"", method="POST"))
+                urlopen(Request(root + "/api/bills/unionpay", data=b"", method="POST"))
             self.assertEqual(error.exception.code, 503)
         finally:
             httpd.shutdown()

@@ -215,14 +215,11 @@ class Handler(BaseHTTPRequestHandler):
         bill_route = re.fullmatch(r"/api/bills/(wechat|alipay|unionpay)", path)
         if (path == "/api/bills" or bill_route) and method == "POST":
             platform = bill_route.group(1) if bill_route else "wechat"
-            if platform != "wechat":
-                return self._send(503, {"error": "该平台的导入接口已保留，暂未开放"})
+            if platform == "unionpay":
+                return self._send(503, {"error": "银联/云闪付导入暂未开放，需按样本适配表头"})
+            source = "支付宝" if platform == "alipay" else "微信"
             filename, content = self._multipart_file()
-            if any(marker in filename.lower() for marker in ("支付宝", "alipay", "银联", "unionpay")):
-                return self._send(503, {"error": "支付宝、银联等平台的导入接口已保留，暂未开放"})
-            parsed = bill_parser.parse_bill(content, filename)
-            for record in parsed:
-                record["source"] = "微信"
+            parsed = bill_parser.parse_bill(content, filename, source=source)
             imported, duplicates = storage.save_transactions(parsed)
             return self._send(201, {
                 "imported": imported,

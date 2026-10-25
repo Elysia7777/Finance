@@ -46,6 +46,15 @@
     setTimeout(() => element.remove(), 3600);
   }
 
+  let checkTimer = null;
+  function showCheck() {
+    const element = $('#action-check');
+    if (!element) return;
+    clearTimeout(checkTimer);
+    element.classList.add('show');
+    checkTimer = setTimeout(() => element.classList.remove('show'), 2500);
+  }
+
   function selectedMonth() { return $('#month-select').value || null; }
 
   function transactionsForMonth() {
@@ -308,7 +317,7 @@
       return `<div class="chat-row user"><div class="chat-bubble user-bubble">${escapeHtml(message.content)}</div></div>`;
     }
     if (message.pending) {
-      return `<div class="chat-row assistant"><div class="chat-bubble assistant-bubble pending">正在思考…</div></div>`;
+      return `<div class="chat-row assistant"><div class="chat-bubble assistant-bubble pending"><span class="thinking-box" aria-label="正在思考"><i></i><i></i><i></i></span></div></div>`;
     }
     const evidence = (message.evidence || []).map(item =>
       `<li>${escapeHtml(item.date)} ${escapeHtml(item.merchant || item.category || '未命名')} ` +
@@ -316,13 +325,59 @@
     const sourceLabel = message.source === 'llm'
       ? `由大模型生成（${escapeHtml(message.model || 'LLM')}）`
       : '由本地核算生成';
-    return `<div class="chat-row assistant">
+    const reveal = message.reveal && !message.revealed;
+    const answer = reveal
+      ? `<div class="chat-answer" data-reveal="${escapeHtml(message.content)}"></div>`
+      : `<div class="chat-answer">${escapeHtml(message.content)}</div>`;
+    return `<div class="chat-row assistant" data-msg-id="${escapeHtml(message.id)}">
       <div class="chat-bubble assistant-bubble">
-        <div class="chat-answer">${escapeHtml(message.content)}</div>
-        <div class="qa-source">${sourceLabel}</div>
+        ${answer}
+        <div class="qa-meta">
+          <div class="qa-source">${sourceLabel}</div>
+          <button class="chat-like" type="button" data-like aria-label="点赞">👍</button>
+        </div>
         ${evidence ? `<div class="qa-evidence-label">来源依据（${message.evidence.length} 笔）：</div><ul class="qa-evidence">${evidence}</ul>` : ''}
       </div>
     </div>`;
+  }
+
+  function revealText(element, text) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      element.textContent = text;
+      return;
+    }
+    element.textContent = '';
+    let globalIndex = 0;
+    const lines = text.split('\n');
+    lines.forEach((line, lineIndex) => {
+      if (lineIndex > 0) element.appendChild(document.createElement('br'));
+      [...line].forEach(char => {
+        const span = document.createElement('span');
+        span.className = 'ink-char';
+        span.textContent = char === ' ' ? '\u00A0' : char;
+        span.style.transitionDelay = `${globalIndex * 25}ms`;
+        element.appendChild(span);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          span.style.opacity = '1';
+          span.style.filter = 'blur(0)';
+        }));
+        globalIndex += 1;
+      });
+    });
+  }
+
+  function revealPendingAnswers() {
+    $$('.chat-answer[data-reveal]').forEach(element => {
+      const text = element.getAttribute('data-reveal');
+      element.removeAttribute('data-reveal');
+      const row = element.closest('[data-msg-id]');
+      const messageId = row ? row.getAttribute('data-msg-id') : null;
+      revealText(element, text);
+      if (messageId) {
+        const message = state.messages.find(item => item.id === messageId);
+        if (message) message.revealed = true;
+      }
+    });
   }
 
   function renderMessages() {
@@ -333,6 +388,7 @@
     }
     box.innerHTML = state.messages.map(renderMessage).join('');
     box.scrollTop = box.scrollHeight;
+    revealPendingAnswers();
   }
 
   function setConversationTitle(conversation) {
@@ -412,7 +468,7 @@
         { method: 'POST', body: { question } },
       );
       state.messages = state.messages.filter(item => !item.pending);
-      state.messages.push(result.message);
+      state.messages.push({ ...result.message, reveal: true });
       renderMessages();
       await refreshConversations();
     } catch (error) {
@@ -772,6 +828,15 @@
     $$('#asset-dialog [data-dialog-close]').forEach(button =>
       button.addEventListener('click', () => $('#asset-dialog').close()));
     document.addEventListener('click', event => {
+      const like = event.target.closest('[data-like]');
+      if (like) {
+        like.classList.remove('bounce');
+        void like.offsetWidth;
+        like.classList.add('bounce');
+        like.classList.toggle('active');
+        showCheck();
+        return;
+      }
       const fetchButton = event.target.closest('[data-price-fetch]');
       if (fetchButton) fetchAssetPrice(fetchButton.closest('form'));
     });
